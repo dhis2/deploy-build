@@ -69,7 +69,7 @@ readonly REPO_NAME=$(basename "$repoDir")
 readonly BUILD_REPO_NAME="${REPO_NAME}-builds"
 readonly BUILD_REPO_DIR="tmp/${BUILD_REPO_NAME}"
 
-readonly BRANCH=$(git symbolic-ref --short HEAD)
+readonly BRANCH=${TRAVIS_BRANCH:-$(git symbolic-ref --short HEAD)}
 
 if [ -n "${CREATE_REPOS:-}" ]; then
     curl -u "$ORG:$GITHUB_TOKEN" "https://api.github.com/${ENDPOINT}" \

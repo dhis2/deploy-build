@@ -19,5 +19,9 @@
   "bugs": {
     "url": "https://github.com/dhis2/deploy-build/issues"
   },
+  "private": false,
+  "publishConfig": {
+      "access": "public"
+  },
   "homepage": "https://github.com/dhis2/deploy-build#readme"
 }

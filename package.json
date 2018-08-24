@@ -1,0 +1,23 @@
+{
+  "name": "@dhis2/deploy-build",
+  "version": "1.0.0",
+  "description": "Deploy build artifacts to a new/existing ${repo}-builds repository ",
+  "bin": "./deploy-build.sh",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dhis2/deploy-build.git"
+  },
+  "keywords": [
+    "deploy",
+    "frontend"
+  ],
+  "author": "Viktor Varland",
+  "license": "BSD-3-Clause",
+  "bugs": {
+    "url": "https://github.com/dhis2/deploy-build/issues"
+  },
+  "homepage": "https://github.com/dhis2/deploy-build#readme"
+}

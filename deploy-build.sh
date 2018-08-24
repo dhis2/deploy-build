@@ -4,6 +4,9 @@
 # served as inspiration:
 # https://github.com/angular/angular/blob/master/scripts/ci/publish-build-artifacts.sh
 
+# external environment variables:
+# - GITHUB_TOKEN
+
 # start: shellharden
 if test "$BASH" = "" || "$BASH" -uc "a=();true \"\${a[@]}\"" 2>/dev/null; then
     # Bash 4.4, Zsh
@@ -18,7 +21,6 @@ shopt -s nullglob globstar
 
 # externally set on env?
 readonly CREATE_REPOS=1
-readonly TOKEN="3cf191af88c66e840d1959fee2a860b9da36d8ab"
 ##
 
 # setup mode and organisation to publish to
@@ -70,7 +72,7 @@ readonly BUILD_REPO_DIR="tmp/${BUILD_REPO_NAME}"
 readonly BRANCH=$(git symbolic-ref --short HEAD)
 
 if [ -n "${CREATE_REPOS:-}" ]; then
-    curl -u "$ORG:$TOKEN" "https://api.github.com/${ENDPOINT}" \
+    curl -u "$ORG:$GITHUB_TOKEN" "https://api.github.com/${ENDPOINT}" \
          -d '{"name":"'$BUILD_REPO_NAME'", "auto_init": true}'
 fi
 

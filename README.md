@@ -65,3 +65,13 @@ To deploy a build to your personal github account:
 export GITHUB_TOKEN=<github token>
 yarn deploy -- <github username>
 ```
+
+# Caveats
+
+## Turn off PR builds in Travis, only use branch builds
+
+If you see commits like: `c9e0584 Merge 46e1c4787... into 8741c7c88...` in your builds repo and don't want them, then turn off the PR builds and just use branch builds.
+
+Travis build the merge commit between the branch and the base, and set the `TRAVIS_BRANCH` env variable to [the base branch](https://docs.travis-ci.com/user/environment-variables#default-environment-variables), which often means master.
+
+By leaving the PR builds off and the branch buils on you still get the benefits of your branch being built and deployed, but avoid the merge commit builds in your master stream.

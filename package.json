@@ -1,6 +1,6 @@
 {
   "name": "@dhis2/deploy-build",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Deploy build artifacts to a new/existing ${repo}-builds repository ",
   "bin": "./deploy-build.sh",
   "scripts": {
@@ -21,7 +21,7 @@
   },
   "private": false,
   "publishConfig": {
-      "access": "public"
+    "access": "public"
   },
   "homepage": "https://github.com/dhis2/deploy-build#readme"
 }

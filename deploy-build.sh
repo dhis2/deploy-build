@@ -113,13 +113,14 @@ echo "Copy the build artifacts from ${BUILD_DIR}"
 rm -rf $BUILD_REPO_DIR/*
 cp -r $BUILD_DIR/* $BUILD_REPO_DIR/
 
-# if [[ ${CI} ]]; then
-#     (
-#         # The file ~/.git_credentials is created in /.circleci/config.yml
-#         cd $REPO_DIR && \
-#             git config credential.helper "store --file=$HOME/.git_credentials"
-#     )
-# fi
+if [[ ${CI:-} ]]; then
+    (
+        # The file ~/.git_credentials is created in /.circleci/config.yml
+        echo "https://${GITHUB_TOKEN}:@github.com" > $HOME/.git_credentials
+        cd $BUILD_REPO_DIR && \
+            git config credential.helper "store --file=$HOME/.git_credentials"
+    )
+fi
 
 echo "$(date)" > $BUILD_REPO_DIR/BUILD_INFO
 echo "$SHA" >> $BUILD_REPO_DIR/BUILD_INFO

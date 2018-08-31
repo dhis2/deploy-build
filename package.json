@@ -1,6 +1,6 @@
 {
   "name": "@dhis2/deploy-build",
-  "version": "1.0.4",
+  "version": "1.1.0",
   "description": "Deploy build artifacts to a new/existing ${repo}-builds repository ",
   "bin": "./deploy-build.sh",
   "scripts": {

@@ -96,23 +96,32 @@ git rm -r deploy/settings.xml
 git rm pom.xml
 yarn add --dev @dhis2/deploy-build
 
-vim package.json
+Add to scripts in `package.json`:
 
-  "deploy": "deploy-build"
-  
-  cp ./package.json ./build/package.json
+```
+"deploy": "deploy-build"
+```
 
-  # delete files array
+In the build script something like:
 
-travis encrypt GITHUB_TOKEN= --add
+```
+cp ./package.json ./build/package.json
+```
 
-vim .travis.yml
+Delete files array from `package.json`.
 
+Remove old tokens from `.travis.yml`.
+
+```
+travis encrypt GITHUB_TOKEN=<token> --add
+```
+
+Add to `.travis.yml`:
+
+```
     node_js:
     - '8'
 
+    scripts:
     - npm run deploy
-
-    # rm old tokens
-
 ```

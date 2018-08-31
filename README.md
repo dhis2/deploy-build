@@ -48,7 +48,7 @@ Example `.travis.yml`:
 ```
 language: node_js
 node_js:
-- 8.11.1
+- 8
 script:
 - npm run build
 - npm run deploy
@@ -75,3 +75,44 @@ If you see commits like: `c9e0584 Merge 46e1c4787... into 8741c7c88...` in your 
 Travis build the merge commit between the branch and the base, and set the `TRAVIS_BRANCH` env variable to [the base branch](https://docs.travis-ci.com/user/environment-variables#default-environment-variables), which often means master.
 
 By leaving the PR builds off and the branch buils on you still get the benefits of your branch being built and deployed, but avoid the merge commit builds in your master stream.
+
+# Install dependency from GitHub, e.g. for DHIS2 core
+
+```
+# for master branch
+yarn add ${app}@dhis2/${app}-builds
+
+# for 2.30
+yarn add ${app}@dhis2/${app}-builds#2.30
+
+# for random feature branch
+yarn add ${app}@dhis2/${app}-builds#feature/random-branch-name
+```
+
+# Basic steps to convert Maven app to this
+
+```
+git rm -r deploy/settings.xml
+git rm pom.xml
+yarn add --dev @dhis2/deploy-build
+
+vim package.json
+
+  "deploy": "deploy-build"
+  
+  cp ./package.json ./build/package.json
+
+  # delete files array
+
+travis encrypt GITHUB_TOKEN= --add
+
+vim .travis.yml
+
+    node_js:
+    - '8'
+
+    - npm run deploy
+
+    # rm old tokens
+
+```

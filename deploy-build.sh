@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 
+###
 # Many thanks to the Angular devs for writing this script which has
 # served as inspiration:
 # https://github.com/angular/angular/blob/master/scripts/ci/publish-build-artifacts.sh
+###
 
+###
 # external environment variables:
 # - GITHUB_TOKEN
 # - CI
 # - TRAVIS_BRANCH
+###
 
 # start: shellharden
 if test "$BASH" = "" || "$BASH" -uc "a=();true \"\${a[@]}\"" 2>/dev/null; then
@@ -21,12 +25,16 @@ set -x # print all commands
 shopt -s nullglob globstar
 # end: shellharden
 
+###
 #### functions
+###
 
 function getLatestTag {
+    ###
     # Find the most recent tag that is reachable from the current
     # commit.  This is shallow clone of the repo, so we might need to
     # fetch more commits to find the tag.
+    ###
 
     local depth=`git log --oneline | wc -l`
     local latestTag=`git describe --tags --abbrev=0 || echo NOT_FOUND`
@@ -50,6 +58,8 @@ function getLatestTag {
 function publishRepo {
     local COMPONENT=$1
     local REPO_DIR=$2
+
+    COMPONENT=${COMPONENT//_/-}
 
     SHA=`git rev-parse HEAD`
     SHORT_SHA=`git rev-parse --short HEAD`
@@ -137,7 +147,9 @@ function publishPackage {
     fi
 }
 
-####
+###
+#### start script
+###
 
 readonly scriptDir=$(cd "$(dirname "$0")"; pwd)
 readonly CREATE_REPOS=1
@@ -154,8 +166,6 @@ else
     readonly ENDPOINT="orgs/${ORG}/repos"
     readonly PROTOCOL="https"
 fi
-
-echo "GLOBAL VARIABLES: CREATE_REPOS, GITHUB_TOKEN, ORG, ENDPOINT, PROTOCOL, ROOT"
 
 publishPackage
 

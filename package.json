@@ -1,10 +1,10 @@
 {
   "name": "@dhis2/deploy-build",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Deploy build artifacts to a new/existing ${repo}-builds repository ",
   "bin": {
-      "deploy-build": "./deploy-build.sh",
-      "publish-build": "./publish-build.sh"
+    "deploy-build": "./deploy-build.sh",
+    "publish-build": "./publish-build.sh"
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"

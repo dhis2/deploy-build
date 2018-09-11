@@ -27,6 +27,10 @@ fi
 
 DIST_TAG=latest
 
+echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+echo "//registry.npmjs.org/:username=travis4dhis2" >> ~/.npmrc
+echo "//registry.npmjs.org/:email=deployment@dhis2.org" >> ~/.npmrc
+
 if [[ ! -d "packages" ]]; then
     dir=$(pwd)
     pushd "${dir}/build"

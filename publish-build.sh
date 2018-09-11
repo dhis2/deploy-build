@@ -28,9 +28,9 @@ fi
 DIST_TAG=latest
 
 if [[ ! -d "packages" ]]; then
-    local dir=$(pwd)
+    dir=$(pwd)
     pushd "${dir}/build"
-    local version=$(node -pe "require('./package.json').version")
+    version=$(node -pe "require('./package.json').version")
     echo "Publishing version: ${version}"
     echo npm publish --tag "$DIST_TAG" --access public
     popd
@@ -38,7 +38,7 @@ else
     for dir in packages/*/
     do
         pushd "${dir}/build"
-        local version=$(node -pe "require('./package.json').version")
+        version=$(node -pe "require('./package.json').version")
         echo "Publishing version: ${version}"
         echo npm publish --tag "$DIST_TAG" --access public
         popd

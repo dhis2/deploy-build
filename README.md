@@ -1,35 +1,26 @@
-# deploy-build
+# build tools
+
+## deploy-build.sh
 
 Deploys a build artifact from `$REPO_NAME` to `${REPO_NAME}-builds`.
 These builds can be pulled from NPM and can be built into the backend.
+
+## publish-build.sh
+
+Publishes a build artifact to NPM if the `$TRAVIS_TAG` environment variable exists.
+
+Cutting the release is done locally, then the tag is pushed.
+
+Travis runs through the build process and then deploys the artifact to the builds repo, and then publishes the version to NPM. 
 
 ## Requirements
 
 - Travis CLI
 - Github [Personal Access Token](https://github.com/settings/tokens) for
   build user, unique for the app
+- NPM Token for user [travis4dhis2](https://www.npmjs.com/settings/travis4dhis2/tokens)
 
 ## Setup
-
-In the app/lib where you have your `package.json`:
-
-```
-yarn add --dev @dhis2/deploy-build
-# or
-npm install --save-dev @dhis2/deploy-build
-```
-
-Add `deploy` script to `package.json`:
-
-```
-{
-    ...
-    "scripts": {
-        "deploy": "deploy-build"
-    }
-    ...
-}
-```
 
 Create `.travis.yml`:
 
@@ -40,7 +31,8 @@ travis init
 Add the encrypted PAT for the app:
 
 ```
-travis encrypt --add GITHUB_TOKEN=<github access token here>
+travis encrypt GITHUB_TOKEN=<github access token here> --add
+travis encrypt NPM_TOKEN=<npm access token here> --add
 ```
 
 Example `.travis.yml`:
@@ -49,11 +41,15 @@ Example `.travis.yml`:
 language: node_js
 node_js:
 - 8
+before_script:
+- npm install --global @dhis2/deploy-build
 script:
 - npm run build
-- npm run deploy
+- deploy-build
+- publish-build
 env:
   global:
+    secure: <encrypted PAT>
     secure: <encrypted PAT>
 ```
 
@@ -62,8 +58,9 @@ env:
 To deploy a build to your personal github account:
 
 ```
+npm install --global @dhis2/deploy-build
 export GITHUB_TOKEN=<github token>
-yarn deploy -- <github username>
+deploy-build <github username>
 ```
 
 # Caveats
@@ -94,15 +91,9 @@ yarn add ${app}@dhis2/${app}-builds#feature/random-branch-name
 ```
 git rm -r deploy/settings.xml
 git rm pom.xml
-yarn add --dev @dhis2/deploy-build
-
-Add to scripts in `package.json`:
-
-```
-"deploy": "deploy-build"
 ```
 
-In the build script something like:
+In the build script of `package.json` something like:
 
 ```
 cp ./package.json ./build/package.json
@@ -114,6 +105,7 @@ Remove old tokens from `.travis.yml`.
 
 ```
 travis encrypt GITHUB_TOKEN=<token> --add
+travis encrypt NPM_TOKEN=<token> --add
 ```
 
 Add to `.travis.yml`:
@@ -121,7 +113,9 @@ Add to `.travis.yml`:
 ```
     node_js:
     - '8'
-
+    before_script:
+    - npm install --global @dhis2/deploy-build
     scripts:
-    - npm run deploy
+    - deploy-build
+    - publish-build
 ```

@@ -44,7 +44,7 @@ else
         pushd "${dir}/build"
         version=$(node -pe "require('./package.json').version")
         echo "Publishing version: ${version}"
-        echo npm publish --tag "$DIST_TAG" --access public
+        npm publish --tag "$DIST_TAG" --access public
         popd
     done
 fi

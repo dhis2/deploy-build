@@ -55,7 +55,7 @@ function getLatestTag {
     echo $latestTag;
 }
 
-function publishRepo {
+function deployRepo {
     local COMPONENT=$1
     local REPO_DIR=$2
 
@@ -133,16 +133,16 @@ function publishRepo {
     )
 }
 
-function publishPackage {
-    if [[ ! -f "lerna.json" ]]; then
+function deployPackage {
+    if [[ ! -d "packages" ]]; then
         local dir=$(pwd)
-        publishRepo "$ROOT" "$dir"
+        deployRepo "$ROOT" "$dir"
     else
         for dir in packages/*/
         do
             local COMPONENT=$(basename ${dir})
             local PREFIX=${ROOT//-app/}
-            publishRepo "${PREFIX}-${COMPONENT}" "$dir"
+            deployRepo "${PREFIX}-${COMPONENT}" "$dir"
         done
     fi
 }
@@ -167,6 +167,6 @@ else
     readonly PROTOCOL="https"
 fi
 
-publishPackage
+deployPackage
 
 exit 0

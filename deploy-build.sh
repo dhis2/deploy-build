@@ -132,6 +132,10 @@ function deployRepo {
             del(."pre-commit")|
             del(.bugs)|
             del(.husky)|
+            del(.jest)|
+            del(.babel)|
+            del(.eslintConfig)|
+            del(.directories)|
             del(.repository)
         )' $BUILD_REPO_DIR/package.json > $BUILD_REPO_DIR/package-min.json
         mv $BUILD_REPO_DIR/package-min.json $BUILD_REPO_DIR/package.json

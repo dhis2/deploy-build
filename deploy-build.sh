@@ -122,6 +122,22 @@ function deployRepo {
     echo "$(date)" > $BUILD_REPO_DIR/BUILD_INFO
     echo "$SHA" >> $BUILD_REPO_DIR/BUILD_INFO
 
+    if [[ "$COMPONENT" == *-app ]]; then
+        echo "Trim the package.json file"
+        $JQ --exit-status '(
+            del(.dependencies)|
+            del(.devDependencies)|
+            del(.scripts)|
+            del(."manifest.webapp")|
+            del(."pre-commit")|
+            del(.bugs)|
+            del(.repository)
+        )' $BUILD_REPO_DIR/package.json > $BUILD_REPO_DIR/package-min.json
+        mv $BUILD_REPO_DIR/package-min.json $BUILD_REPO_DIR/package.json
+    else
+        echo "${COMPONENT} did not end with -app, skip trim of package.json"
+    fi
+
     (
         cd $BUILD_REPO_DIR && \
         git config user.name "${COMMITTER_USER_NAME}" && \
@@ -147,6 +163,13 @@ function deployPackage {
     fi
 }
 
+function getJQ {
+    echo "Install jq dep"
+    curl -L -o "./jq" "https://github.com/stedolan/jq/releases/download/jq-1.5/jq-linux64"
+    chmod +x "./jq"
+    JQ="./jq"
+}
+
 ###
 #### start script
 ###
@@ -167,6 +190,12 @@ else
     readonly PROTOCOL="https"
 fi
 
+if [[ ! -x "$(command -v jq)" ]]; then
+    getJQ
+else
+    echo "jq binary found"
+    JQ="jq"
+fi
 deployPackage
 
 exit 0

@@ -43,10 +43,22 @@ node_js:
 - 8
 before_script:
 - npm install --global @dhis2/deploy-build
+- npm rebuild node-sass
 script:
+- npm run lint
+- npm run coverage
 - npm run build
-- deploy-build
-- publish-build
+deploy:
+- provider: script
+  script: deploy-build
+  skip_cleanup: true
+  on:
+    all_branches: true
+- provider: script
+  script: publish-build
+  skip_cleanup: true
+  on:
+    tags: true
 env:
   global:
     secure: <encrypted PAT>
@@ -77,45 +89,11 @@ By leaving the PR builds off and the branch buils on you still get the benefits 
 
 ```
 # for master branch
-yarn add ${app}@dhis2/${app}-builds
+npm install ${app}@dhis2/${app}-builds
 
 # for 2.30
-yarn add ${app}@dhis2/${app}-builds#2.30
+npm install ${app}@dhis2/${app}-builds#2.30
 
 # for random feature branch
-yarn add ${app}@dhis2/${app}-builds#feature/random-branch-name
-```
-
-# Basic steps to convert Maven app to this
-
-```
-git rm -r deploy/settings.xml
-git rm pom.xml
-```
-
-In the build script of `package.json` something like:
-
-```
-cp ./package.json ./build/package.json
-```
-
-Delete files array from `package.json`.
-
-Remove old tokens from `.travis.yml`.
-
-```
-travis encrypt GITHUB_TOKEN=<token> --add
-travis encrypt NPM_TOKEN=<token> --add
-```
-
-Add to `.travis.yml`:
-
-```
-    node_js:
-    - '8'
-    before_script:
-    - npm install --global @dhis2/deploy-build
-    scripts:
-    - deploy-build
-    - publish-build
+npm install ${app}@dhis2/${app}-builds#feature/random-branch-name
 ```

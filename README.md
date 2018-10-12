@@ -43,7 +43,6 @@ node_js:
 - 8
 before_script:
 - npm install --global @dhis2/deploy-build
-- npm rebuild node-sass
 script:
 - npm run lint
 - npm run coverage

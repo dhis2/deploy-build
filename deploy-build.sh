@@ -122,6 +122,9 @@ function deployRepo {
     echo "$(date)" > $BUILD_REPO_DIR/BUILD_INFO
     echo "$SHA" >> $BUILD_REPO_DIR/BUILD_INFO
 
+    echo "Copy package.json to ${BUILD_REPO_DIR}"
+    cp "${REPO_DIR}/package.json" "${BUILD_REPO_DIR}/package.json"
+
     if [[ "$COMPONENT" == *-app ]]; then
         echo "Trim the package.json file"
         $JQ --exit-status '(
@@ -138,6 +141,10 @@ function deployRepo {
             del(.directories)|
             del(.repository)
         )' $BUILD_REPO_DIR/package.json > $BUILD_REPO_DIR/package-min.json
+
+        echo "Result of trim"
+        cat $BUILD_REPO_DIR/package-min.json
+
         mv $BUILD_REPO_DIR/package-min.json $BUILD_REPO_DIR/package.json
     else
         echo "${COMPONENT} did not end with -app, skip trim of package.json"

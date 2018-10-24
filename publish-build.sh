@@ -25,7 +25,24 @@ fi
 # this part needs to be expanded for other dist-tags
 # based on api levels
 
+function deployPackage () {
+    local COMPONENT=$1
+    local REPO_DIR=$2
+
+    COMPONENT=${COMPONENT//_/-}
+
+    BUILD_REPO_NAME="${COMPONENT}-builds"
+    BUILD_REPO_DIR="tmp/${BUILD_REPO_NAME}"
+
+    version=$(node -pe "require('./package.json').version")
+    echo "Publishing version: ${version}"
+
+    npm publish "$BUILD_REPO_DIR" --tag "$DIST_TAG" --access public
+}
+
 DIST_TAG=latest
+
+ROOT=$(basename $(pwd))
 
 echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
 echo "//registry.npmjs.org/:username=travis4dhis2" >> ~/.npmrc
@@ -33,19 +50,13 @@ echo "//registry.npmjs.org/:email=deployment@dhis2.org" >> ~/.npmrc
 
 if [[ ! -d "packages" ]]; then
     dir=$(pwd)
-    pushd "${dir}/build"
-    version=$(node -pe "require('./package.json').version")
-    echo "Publishing version: ${version}"
-    npm publish --tag "$DIST_TAG" --access public
-    popd
+    deployPackage "$ROOT" "$dir"
 else
     for dir in packages/*/
     do
-        pushd "${dir}/build"
-        version=$(node -pe "require('./package.json').version")
-        echo "Publishing version: ${version}"
-        npm publish --tag "$DIST_TAG" --access public
-        popd
+        COMPONENT=$(basename ${dir})
+        PREFIX=${ROOT//-app/}
+        deployPackage "${PREFIX}-${COMPONENT}" "$dir"
     done
 fi
 

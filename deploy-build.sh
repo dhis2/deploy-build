@@ -71,7 +71,7 @@ function deployRepo {
 
     BUILD_DIR="${REPO_DIR}/build"
 
-    BUILD_REPO_NAME="${COMPONENT}-builds"
+    BUILD_REPO_NAME="${COMPONENT}"
     BUILD_REPO_DIR="tmp/${BUILD_REPO_NAME}"
 
     BRANCH=${TRAVIS_BRANCH:-$(git symbolic-ref --short HEAD)}
@@ -197,7 +197,7 @@ if [ $# -gt 0 ]; then
     readonly ENDPOINT="user/repos"
     readonly PROTOCOL="ssh"
 else
-    readonly ORG="dhis2"
+    readonly ORG="d2-ci"
     readonly ENDPOINT="orgs/${ORG}/repos"
     readonly PROTOCOL="https"
 fi

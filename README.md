@@ -2,7 +2,7 @@
 
 ## deploy-build.sh
 
-Deploys a build artifact from `$REPO_NAME` to `${REPO_NAME}-builds`.
+Deploys a build artifact from `dhis2/$REPO_NAME` to `d2-ci/${REPO_NAME}`.
 These builds can be pulled from NPM and can be built into the backend.
 
 ## publish-build.sh
@@ -88,11 +88,11 @@ By leaving the PR builds off and the branch buils on you still get the benefits 
 
 ```
 # for master branch
-npm install ${app}@dhis2/${app}-builds
+npm install ${app}@dhis2/${app}
 
 # for 2.30
-npm install ${app}@dhis2/${app}-builds#2.30
+npm install ${app}@dhis2/${app}#2.30
 
 # for random feature branch
-npm install ${app}@dhis2/${app}-builds#feature/random-branch-name
+npm install ${app}@dhis2/${app}#feature/random-branch-name
 ```

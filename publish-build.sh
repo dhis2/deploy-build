@@ -31,7 +31,7 @@ function deployPackage () {
 
     COMPONENT=${COMPONENT//_/-}
 
-    BUILD_REPO_NAME="${COMPONENT}-builds"
+    BUILD_REPO_NAME="${COMPONENT}"
     BUILD_REPO_DIR="tmp/${BUILD_REPO_NAME}"
 
     version=$(node -pe "require('./package.json').version")

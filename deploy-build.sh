@@ -55,9 +55,21 @@ function getLatestTag {
     echo $latestTag;
 }
 
+function getVersion {
+    local dir=$1
+
+    if [[ ! -f "${dir}/lerna.json" ]]; then
+        local JSON="${dir}/package.json"
+    else
+        local JSON="${dir}/lerna.json"
+    fi
+    $JQ --exit-status '(.version)' $JSON
+}
+
 function deployRepo {
     local COMPONENT=$1
     local REPO_DIR=$2
+    local VERSION=$3
 
     COMPONENT=${COMPONENT//_/-}
 
@@ -127,7 +139,7 @@ function deployRepo {
 
     if [[ "$COMPONENT" == *-app ]]; then
         echo "Trim the package.json file"
-        $JQ --exit-status '(
+        $JQ --exit-status "(
             del(.dependencies)|
             del(.devDependencies)|
             del(.scripts)|
@@ -139,16 +151,18 @@ function deployRepo {
             del(.babel)|
             del(.eslintConfig)|
             del(.directories)|
-            del(.repository)
-        )' $BUILD_REPO_DIR/package.json > $BUILD_REPO_DIR/package-min.json
-
-        echo "Result of trim"
-        cat $BUILD_REPO_DIR/package-min.json
-
-        mv $BUILD_REPO_DIR/package-min.json $BUILD_REPO_DIR/package.json
+            del(.repository)|
+            .version = $ver
+        )" $BUILD_REPO_DIR/package.json > $BUILD_REPO_DIR/package-min.json
     else
         echo "${COMPONENT} did not end with -app, skip trim of package.json"
+        $JQ --exit-status "(
+            .version = $ver
+        )" $BUILD_REPO_DIR/package.json > $BUILD_REPO_DIR/package-min.json
     fi
+
+    cat $BUILD_REPO_DIR/package-min.json
+    mv $BUILD_REPO_DIR/package-min.json $BUILD_REPO_DIR/package.json
 
     (
         cd $BUILD_REPO_DIR && \
@@ -162,15 +176,17 @@ function deployRepo {
 }
 
 function deployPackage {
+    local baseDir=$(pwd)
+    local ver=$(getVersion "$baseDir")
+
     if [[ ! -d "packages" ]]; then
-        local dir=$(pwd)
-        deployRepo "$ROOT" "$dir"
+        deployRepo "$ROOT" "$baseDir" "$ver"
     else
         for dir in packages/*/
         do
             local COMPONENT=$(basename ${dir})
             local PREFIX=${ROOT//-app/}
-            deployRepo "${PREFIX}-${COMPONENT}" "$dir"
+            deployRepo "${PREFIX}-${COMPONENT}" "$dir" "$ver"
         done
     fi
 }

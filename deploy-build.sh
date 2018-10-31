@@ -139,21 +139,12 @@ function deployRepo {
 
     if [[ "$COMPONENT" == *-app ]]; then
         echo "Trim the package.json file"
-        $JQ --exit-status "(
-            del(.dependencies)|
-            del(.devDependencies)|
-            del(.scripts)|
-            del(."manifest.webapp")|
-            del(."pre-commit")|
-            del(.bugs)|
-            del(.husky)|
-            del(.jest)|
-            del(.babel)|
-            del(.eslintConfig)|
-            del(.directories)|
-            del(.repository)|
-            .version = $ver
-        )" $BUILD_REPO_DIR/package.json > $BUILD_REPO_DIR/package-min.json
+        $JQ --exit-status "{
+            name: .name,
+            description: .description,
+            license: .license,
+            version: $ver
+        }" $BUILD_REPO_DIR/package.json > $BUILD_REPO_DIR/package-min.json
     else
         echo "${COMPONENT} did not end with -app, skip trim of package.json"
         $JQ --exit-status "(

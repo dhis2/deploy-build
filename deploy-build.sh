@@ -148,6 +148,9 @@ function deployRepo {
     else
         echo "${COMPONENT} did not end with -app, skip trim of package.json"
         $JQ --exit-status "(
+            if has("main") then .main |= sub("build\/"; "") else . end|
+            if has("module") then .module |= sub("build\/"; "") else . end|
+            if has("browser") then .browser |= sub("build\/"; "") else . end|
             .version = $ver
         )" $BUILD_REPO_DIR/package.json > $BUILD_REPO_DIR/package-min.json
     fi

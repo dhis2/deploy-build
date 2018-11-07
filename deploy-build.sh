@@ -57,19 +57,19 @@ function getLatestTag {
 
 function getVersion {
     local dir=$1
-
-    if [[ ! -f "${dir}/lerna.json" ]]; then
-        local JSON="${dir}/package.json"
-    else
-        local JSON="${dir}/lerna.json"
-    fi
+    local JSON="${dir}/package.json"
     $JQ --exit-status '(.version)' $JSON
+}
+
+function getPackageName {
+    local dir=$1
+    local JSON="${dir}/package.json"
+    $JQ --exit-status '(.name)' $JSON
 }
 
 function deployRepo {
     local COMPONENT=$1
     local REPO_DIR=$2
-    local VERSION=$3
 
     COMPONENT=${COMPONENT//_/-}
 
@@ -143,7 +143,7 @@ function deployRepo {
             name: .name,
             description: .description,
             license: .license,
-            version: $ver
+            version: $pkg_ver
         }" $BUILD_REPO_DIR/package.json > $BUILD_REPO_DIR/package-min.json
     else
         echo "${COMPONENT} did not end with -app, skip trim of package.json"
@@ -151,7 +151,12 @@ function deployRepo {
             if has(\"main\") then .main |= sub(\"build\/\"; \"\") else . end|
             if has(\"module\") then .module |= sub(\"build\/\"; \"\") else . end|
             if has(\"browser\") then .browser |= sub(\"build\/\"; \"\") else . end|
-            .version = $ver
+
+            if has(\"dependencies\") then .dependencies |= (.|with_entries(if .key|startswith(${pkg_name}) then .value |= $pkg_ver else . end)) else . end|
+            if has(\"devDependencies\") then .devDependencies |= (.|with_entries(if .key|startswith(${pkg_name}) then .value |= $pkg_ver else . end)) else . end|
+            if has(\"peerDependencies\") then .peerDependencies |= (.|with_entries(if .key|startswith(${pkg_name}) then .value |= $pkg_ver else . end)) else . end|
+
+            .version = $pkg_ver
         )" $BUILD_REPO_DIR/package.json > $BUILD_REPO_DIR/package-min.json
     fi
 
@@ -171,16 +176,17 @@ function deployRepo {
 
 function deployPackage {
     local baseDir=$(pwd)
-    local ver=$(getVersion "$baseDir")
+    local pkg_ver=$(getVersion "$baseDir")
+    local pkg_name=$(getPackageName "$baseDir")
 
     if [[ ! -d "packages" ]]; then
-        deployRepo "$ROOT" "$baseDir" "$ver"
+        deployRepo "$ROOT" "$baseDir"
     else
         for dir in packages/*/
         do
             local COMPONENT=$(basename ${dir})
             local PREFIX=${ROOT//-app/}
-            deployRepo "${PREFIX}-${COMPONENT}" "$dir" "$ver"
+            deployRepo "${PREFIX}-${COMPONENT}" "$dir"
         done
     fi
 }

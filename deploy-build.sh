@@ -143,7 +143,7 @@ function deployRepo {
             name: .name,
             description: .description,
             license: .license,
-            version: $pkg_ver
+            version: \"$pkg_ver\"
         }" $BUILD_REPO_DIR/package.json > $BUILD_REPO_DIR/package-min.json
     else
         echo "${COMPONENT} did not end with -app, skip trim of package.json"
@@ -152,11 +152,10 @@ function deployRepo {
             if has(\"module\") then .module |= sub(\"build\/\"; \"\") else . end|
             if has(\"browser\") then .browser |= sub(\"build\/\"; \"\") else . end|
 
-            if has(\"dependencies\") then .dependencies |= (.|with_entries(if .key|startswith(${pkg_name}) then .value |= $pkg_ver else . end)) else . end|
-            if has(\"devDependencies\") then .devDependencies |= (.|with_entries(if .key|startswith(${pkg_name}) then .value |= $pkg_ver else . end)) else . end|
-            if has(\"peerDependencies\") then .peerDependencies |= (.|with_entries(if .key|startswith(${pkg_name}) then .value |= $pkg_ver else . end)) else . end|
+            if has(\"dependencies\") then .dependencies |= (.|with_entries(if .key|startswith(\"${pkg_name}-\") then .value |= \"$pkg_ver\" else . end)) else . end|
+            if has(\"peerDependencies\") then .peerDependencies |= (.|with_entries(if .key|startswith(\"${pkg_name-}\") then .value |= \"$pkg_ver\" else . end)) else . end|
 
-            .version = $pkg_ver
+            .version = \"$pkg_ver\"
         )" $BUILD_REPO_DIR/package.json > $BUILD_REPO_DIR/package-min.json
     fi
 
@@ -178,6 +177,10 @@ function deployPackage {
     local baseDir=$(pwd)
     local pkg_ver=$(getVersion "$baseDir")
     local pkg_name=$(getPackageName "$baseDir")
+
+    # strip wrapping quotes
+    pkg_ver=${pkg_ver//\"/}
+    pkg_name=${pkg_name//\"/}
 
     if [[ ! -d "packages" ]]; then
         deployRepo "$ROOT" "$baseDir"

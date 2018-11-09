@@ -189,6 +189,11 @@ function deployPackage {
         do
             local COMPONENT=$(basename ${dir})
             local PREFIX=${ROOT//-app/}
+
+            if [[ "$pkg_ver" == "null" ]]; then
+                pkg_ver=$(getVersion "./packages/${COMPONENT}")
+            fi
+
             deployRepo "${PREFIX}-${COMPONENT}" "$dir"
         done
     fi

@@ -11,7 +11,6 @@
 # - GITHUB_TOKEN
 # - CI
 # - TRAVIS_BRANCH
-# - TRAVIS_TAG
 ###
 
 # start: shellharden
@@ -79,15 +78,8 @@ function deployRepo {
     COMMIT_MSG=`git log --oneline -1`
     COMMITTER_USER_NAME=`git --no-pager show -s --format='%cN' HEAD`
     COMMITTER_USER_EMAIL=`git --no-pager show -s --format='%cE' HEAD`
-
-
-    if [[ ! ${TRAVIS_TAG:-} ]]; then
-        LATEST_TAG=`getLatestTag`
-        BUILD_VER="${LATEST_TAG}+${SHORT_SHA}"
-    else
-        LATEST_TAG=$TRAVIS_TAG
-        BUILD_VER="${LATEST_TAG}"
-    fi
+    LATEST_TAG=`getLatestTag`
+    BUILD_VER="${LATEST_TAG}+${SHORT_SHA}"
 
     BUILD_DIR="${REPO_DIR}/build"
 

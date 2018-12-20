@@ -155,6 +155,7 @@ function deployRepo {
             if has(\"dependencies\") then .dependencies |= (.|with_entries(if .key|startswith(\"${pkg_name}-\") then .value |= \"$pkg_ver\" else . end)) else . end|
             if has(\"peerDependencies\") then .peerDependencies |= (.|with_entries(if .key|startswith(\"${pkg_name}-\") then .value |= \"$pkg_ver\" else . end)) else . end|
 
+            .private = false|
             .version = \"$pkg_ver\"
         )" $BUILD_REPO_DIR/package.json > $BUILD_REPO_DIR/package-min.json
     fi

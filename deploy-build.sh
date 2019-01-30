@@ -81,9 +81,8 @@ function deployRepo {
     LATEST_TAG=`getLatestTag`
     BUILD_VER="${LATEST_TAG}+${SHORT_SHA}"
 
-    BUILD_DIR="${REPO_DIR}/build"
-
     BUILD_REPO_NAME="${COMPONENT}"
+    BUILD_DIR="${REPO_DIR}/build"
     BUILD_REPO_DIR="tmp/${BUILD_REPO_NAME}"
 
     BRANCH=${TRAVIS_BRANCH:-$(git symbolic-ref --short HEAD)}
@@ -123,8 +122,16 @@ function deployRepo {
         echo "Copy the build artifacts from ${BUILD_DIR}"
         rm -rf $BUILD_REPO_DIR/*
         cp -r $BUILD_DIR/* $BUILD_REPO_DIR/
+
+        echo "Copy package.json to ${BUILD_REPO_DIR}"
+        cp "${REPO_DIR}/package.json" "${BUILD_REPO_DIR}/package.json"
     else
         echo "No build directory, assume root package deployment."
+        find . -maxdepth 1 \
+            -not -path "." \
+            -not -path "*tmp*" \
+            -not -path "*\.git" \
+            -exec cp -r -t $BUILD_REPO_DIR {} +
     fi
 
     if [[ ${CI:-} ]]; then
@@ -137,9 +144,6 @@ function deployRepo {
 
     echo "$(date)" > $BUILD_REPO_DIR/BUILD_INFO
     echo "$SHA" >> $BUILD_REPO_DIR/BUILD_INFO
-
-    echo "Copy package.json to ${BUILD_REPO_DIR}"
-    cp "${REPO_DIR}/package.json" "${BUILD_REPO_DIR}/package.json"
 
     if [[ "$COMPONENT" == *-app ]]; then
         echo "Trim the package.json file"

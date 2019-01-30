@@ -119,9 +119,13 @@ function deployRepo {
             git checkout -b "${BRANCH}"
     )
 
-    echo "Copy the build artifacts from ${BUILD_DIR}"
-    rm -rf $BUILD_REPO_DIR/*
-    cp -r $BUILD_DIR/* $BUILD_REPO_DIR/
+    if [[ -d "$BUILD_DIR" ]]; then
+        echo "Copy the build artifacts from ${BUILD_DIR}"
+        rm -rf $BUILD_REPO_DIR/*
+        cp -r $BUILD_DIR/* $BUILD_REPO_DIR/
+    else
+        echo "No build directory, assume root package deployment."
+    fi
 
     if [[ ${CI:-} ]]; then
         (

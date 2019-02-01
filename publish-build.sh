@@ -25,7 +25,7 @@ fi
 # this part needs to be expanded for other dist-tags
 # based on api levels
 
-function deployPackage () {
+function publishPackage () {
     local COMPONENT=$1
     local REPO_DIR=$2
 
@@ -55,13 +55,13 @@ echo "//registry.npmjs.org/:email=deployment@dhis2.org" >> ~/.npmrc
 
 if [[ ! -d "packages" ]]; then
     dir=$(pwd)
-    deployPackage "$ROOT" "$dir"
+    publishPackage "$ROOT" "$dir"
 else
     for dir in packages/*/
     do
         COMPONENT=$(basename ${dir})
         PREFIX=${ROOT//-app/}
-        deployPackage "${PREFIX}-${COMPONENT}" "$dir"
+        publishPackage "${PREFIX}-${COMPONENT}" "$dir"
     done
 fi
 

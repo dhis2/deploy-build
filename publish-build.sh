@@ -37,7 +37,12 @@ function deployPackage () {
     version=$(node -pe "require('./package.json').version")
     echo "Publishing version: ${version}"
 
-    npm publish "$BUILD_REPO_DIR" --tag "$DIST_TAG" --access public
+
+    if [[ -d "$BUILD_REPO_DIR" ]]; then
+        npm publish "$BUILD_REPO_DIR" --tag "$DIST_TAG" --access public
+    else
+        npm publish --tag "$DIST_TAG" --access public
+    fi
 }
 
 DIST_TAG=latest

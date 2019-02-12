@@ -47,13 +47,13 @@ function exec () {
 
 function publishPackage () {
     local PACKAGE_DIR=$1
-    local PACKAGE_JSON="${PACKAGE_DIR}package.json"
+    local PACKAGE_JSON="${PACKAGE_DIR}/package.json"
 
     if [[ ! -e ${PACKAGE_JSON} ]]; then
         printerr "Package.json file '${PACKAGE_JSON}' does not exist, skipping publish."
     else
-        name=$(node -pe "require('${PACKAGE_DIR}package.json').name")
-        version=$(node -pe "require('${PACKAGE_DIR}package.json').version")
+        name=$(node -pe "require('${PACKAGE_JSON}').name")
+        version=$(node -pe "require('${PACKAGE_JSON}').version")
         echo "Publishing package: ${name} @ ${version}"
 
         exec "npm publish \"$PACKAGE_DIR\" --tag \"$DIST_TAG\" --access public"
@@ -69,16 +69,16 @@ echo "//registry.npmjs.org/:email=deployment@dhis2.org" >> ~/.npmrc
 
 if [ ! -d "./packages" ] && [ ! -d "${BUILDS_DIR}" ]; then
     dir=$(pwd)
-    publishPackage "${dir}/"
+    publishPackage "${dir}"
 elif [[ -d "${BUILDS_DIR}" ]]; then
     for dir in ${BUILDS_DIR}/*/
     do
-        publishPackage "${dir}"
+        publishPackage "${dir%/}"
     done
 else
     for dir in ./packages/*/
     do
-        publishPackage "${dir}"
+        publishPackage "${dir%/}"
     done
 fi
 

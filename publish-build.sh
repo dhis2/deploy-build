@@ -5,8 +5,6 @@
 # - TRAVIS_TAG
 ###
 
-source ./shared.sh
-
 # start: shellharden
 if test "$BASH" = "" || "$BASH" -uc "a=();true \"\${a[@]}\"" 2>/dev/null; then
     # Bash 4.4, Zsh

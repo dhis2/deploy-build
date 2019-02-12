@@ -29,6 +29,8 @@ shopt -s nullglob globstar
 #### functions
 ###
 
+BUILDS_DIR="tmp/builds"
+
 function getLatestTag {
     ###
     # Find the most recent tag that is reachable from the current
@@ -83,7 +85,7 @@ function deployRepo {
 
     BUILD_REPO_NAME="${COMPONENT}"
     BUILD_DIR="${REPO_DIR}/build"
-    BUILD_REPO_DIR="tmp/${BUILD_REPO_NAME}"
+    BUILD_REPO_DIR="${BUILDS_DIR}/${BUILD_REPO_NAME}"
 
     BRANCH=${TRAVIS_BRANCH:-$(git symbolic-ref --short HEAD)}
     

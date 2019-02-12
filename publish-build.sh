@@ -26,42 +26,36 @@ fi
 # based on api levels
 
 function publishPackage () {
-    local COMPONENT=$1
-    local REPO_DIR=$2
+    local PACKAGE_DIR=$1
 
-    COMPONENT=${COMPONENT//_/-}
+    name=$(node -pe "require('${PACKAGE_DIR}/package.json').name")
+    version=$(node -pe "require('${PACKAGE_DIR}/package.json').version")
+    echo "Publishing package: ${name} @ ${version}"
 
-    BUILD_REPO_NAME="${COMPONENT}"
-    BUILD_REPO_DIR="tmp/${BUILD_REPO_NAME}"
-
-    version=$(node -pe "require('./package.json').version")
-    echo "Publishing version: ${version}"
-
-
-    if [[ -d "$BUILD_REPO_DIR" ]]; then
-        npm publish "$BUILD_REPO_DIR" --tag "$DIST_TAG" --access public
-    else
-        npm publish --tag "$DIST_TAG" --access public
-    fi
+    npm publish "$PACKAGE_DIR" --tag "$DIST_TAG" --access public
 }
 
 DIST_TAG=latest
 
-ROOT=$(basename $(pwd))
+BUILDS_DIR="./tmp/builds"
 
 echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
 echo "//registry.npmjs.org/:username=travis4dhis2" >> ~/.npmrc
 echo "//registry.npmjs.org/:email=deployment@dhis2.org" >> ~/.npmrc
 
-if [[ ! -d "packages" ]]; then
+if [[ ! -d "./packages" ]] && [[ ! -d "${BUILDS_DIR}" ]]; then
     dir=$(pwd)
-    publishPackage "$ROOT" "$dir"
+    publishPackage "${dir}"
+elif [[ -d "${BUILDS_DIR}" ]]; then
+    for dir in builds/*/
+    do
+        COMPONENT=$(basename ${dir})
+        publishPackage "${BUILDS_DIR}/${COMPONENT}"
+    done
 else
     for dir in packages/*/
     do
-        COMPONENT=$(basename ${dir})
-        PREFIX=${ROOT//-app/}
-        publishPackage "${PREFIX}-${COMPONENT}" "$dir"
+        publishPackage "${dir}"
     done
 fi
 

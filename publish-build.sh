@@ -17,43 +17,66 @@ set -x # print all commands
 shopt -s nullglob globstar
 # end: shellharden
 
+function printerr () {
+    >&2 echo -e "\e[91m${1}\e[0m"
+}
+
 if [[ ! ${TRAVIS_TAG:-} ]]; then
-    echo "Not a built for a Git tag, do not publish!"
+    printerr "Not built from a Git tag, do not publish!"
     exit 0
+fi
+
+DRYRUN=0
+if [ $# -gt 0 ] && [ "$1" == "--dry-run" ]; then
+    DRYRUN=1
+    printerr "PERFORMING DRY RUN"
 fi
 
 # this part needs to be expanded for other dist-tags
 # based on api levels
 
+function exec () {
+    local CMD=$1
+
+    if [ $DRYRUN -eq 1 ]; then
+        echo $CMD
+    else
+        `${CMD}`
+    fi
+}
+
 function publishPackage () {
     local PACKAGE_DIR=$1
+    local PACKAGE_JSON="${PACKAGE_DIR}package.json"
 
-    name=$(node -pe "require('${PACKAGE_DIR}/package.json').name")
-    version=$(node -pe "require('${PACKAGE_DIR}/package.json').version")
-    echo "Publishing package: ${name} @ ${version}"
+    if [[ ! -e ${PACKAGE_JSON} ]]; then
+        printerr "Package.json file '${PACKAGE_JSON}' does not exist, skipping publish."
+    else
+        name=$(node -pe "require('${PACKAGE_DIR}package.json').name")
+        version=$(node -pe "require('${PACKAGE_DIR}package.json').version")
+        echo "Publishing package: ${name} @ ${version}"
 
-    npm publish "$PACKAGE_DIR" --tag "$DIST_TAG" --access public
+        exec "npm publish \"$PACKAGE_DIR\" --tag \"$DIST_TAG\" --access public"
+    fi
 }
 
 DIST_TAG=latest
-
 BUILDS_DIR="./tmp/builds"
 
 echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
 echo "//registry.npmjs.org/:username=travis4dhis2" >> ~/.npmrc
 echo "//registry.npmjs.org/:email=deployment@dhis2.org" >> ~/.npmrc
 
-if [[ ! -d "./packages" ]] && [[ ! -d "${BUILDS_DIR}" ]]; then
+if [ ! -d "./packages" ] && [ ! -d "${BUILDS_DIR}" ]; then
     dir=$(pwd)
-    publishPackage "${dir}"
+    publishPackage "${dir}/"
 elif [[ -d "${BUILDS_DIR}" ]]; then
-    for dir in builds/*/
+    for dir in ${BUILDS_DIR}/*/
     do
-        COMPONENT=$(basename ${dir})
-        publishPackage "${BUILDS_DIR}/${COMPONENT}"
+        publishPackage "${dir}"
     done
 else
-    for dir in packages/*/
+    for dir in ./packages/*/
     do
         publishPackage "${dir}"
     done

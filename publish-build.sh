@@ -56,7 +56,7 @@ function publishPackage () {
         version=$(node -pe "require('${PACKAGE_JSON}').version")
         echo "Publishing package: ${name} @ ${version}"
 
-        exec "npm publish \"$PACKAGE_DIR\" --tag \"$DIST_TAG\" --access public"
+        exec "npm publish ${PACKAGE_DIR} --tag ${DIST_TAG} --access public"
     fi
 }
 

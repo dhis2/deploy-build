@@ -41,7 +41,7 @@ function exec () {
     if [ $DRYRUN -eq 1 ]; then
         echo $CMD
     else
-        `${CMD}`
+        $CMD
     fi
 }
 

@@ -36,7 +36,7 @@ fi
 # based on api levels
 
 function exec () {
-    local CMD=$1
+    local CMD="$1"
 
     if [ $DRYRUN -eq 1 ]; then
         echo $CMD

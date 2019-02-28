@@ -1,5 +1,7 @@
 # build tools
 
+[![Greenkeeper badge](https://badges.greenkeeper.io/dhis2/deploy-build.svg)](https://greenkeeper.io/)
+
 ## deploy-build.sh
 
 Deploys a build artifact from `dhis2/$REPO_NAME` to `d2-ci/${REPO_NAME}`.

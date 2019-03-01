@@ -198,16 +198,17 @@ function deployPackage {
     else
         for dir in packages/*/
         do
-            local COMPONENT=$(basename ${dir})
-            local PREFIX=${ROOT//-app/}
+            local COMPONENT=$(getPackageName ${dir})
+            COMPONENT=${COMPONENT//@dhis2\//}
+            COMPONENT=${COMPONENT//\"/}
 
             # justin case
             if [[ "$pkg_ver" == "null" ]]; then
-                pkg_ver=$(getVersion "./packages/${COMPONENT}")
+                pkg_ver=$(getVersion "$dir")
                 pkg_ver=${pkg_ver//\"/}
             fi
 
-            deployRepo "${PREFIX}-${COMPONENT}" "$dir"
+            deployRepo "${COMPONENT}" "$dir"
         done
     fi
 }

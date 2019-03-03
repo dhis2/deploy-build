@@ -11,6 +11,7 @@
 # - GITHUB_TOKEN
 # - CI
 # - TRAVIS_BRANCH
+# - TRAVIS_PULL_REQUEST
 ###
 
 # start: shellharden
@@ -223,6 +224,11 @@ function getJQ {
 ###
 #### start script
 ###
+
+if [ "$TRAVIS_PULL_REQUEST" != "false" ]; then
+    echo "Travis is building a PR, skip deploy."
+    exit 0
+fi
 
 readonly scriptDir=$(cd "$(dirname "$0")"; pwd)
 readonly CREATE_REPOS=1

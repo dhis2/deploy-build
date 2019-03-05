@@ -130,8 +130,8 @@ function deployRepo {
         cp "${REPO_DIR}/package.json" "${BUILD_REPO_DIR}/package.json"
     else
         echo "No build directory, assume root package deployment."
-        find "./${REPO_DIR}" -maxdepth 1 \
-            -not -path "." \
+        find "$REPO_DIR" -maxdepth 1 \
+            -not -path "$REPO_DIR" \
             -not -path "*tmp*" \
             -not -path "*\.git" \
             -exec cp -r -t $BUILD_REPO_DIR {} +

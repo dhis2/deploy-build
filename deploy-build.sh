@@ -163,8 +163,10 @@ function deployRepo {
             if has(\"module\") then .module |= sub(\"build\/\"; \"\") else . end|
             if has(\"browser\") then .browser |= sub(\"build\/\"; \"\") else . end|
 
-            if has(\"dependencies\") then .dependencies |= (.|with_entries(if .key|startswith(\"${pkg_name}-\") then .value |= \"$pkg_ver\" else . end)) else . end|
-            if has(\"peerDependencies\") then .peerDependencies |= (.|with_entries(if .key|startswith(\"${pkg_name}-\") then .value |= \"$pkg_ver\" else . end)) else . end|
+            if has(\"dependencies\") then .dependencies |=
+                (.|with_entries(if .value == \"0.0.0-PLACEHOLDER\" then .value |= \"$pkg_ver\" else . end)) else . end|
+            if has(\"peerDependencies\") then .peerDependencies |=
+                (.|with_entries(if .value == \"0.0.0-PLACEHOLDER\" then .value |= \"$pkg_ver\" else . end)) else . end|
 
             .private = false|
             .version = \"$pkg_ver\"

@@ -85,7 +85,7 @@ function deployRepo {
     BUILD_VER="${LATEST_TAG}+${SHORT_SHA}"
 
     BUILD_REPO_NAME="${COMPONENT}"
-    BUILD_DIR="${REPO_DIR}/build"
+    BUILD_DIR="${REPO_DIR}/${SUBDIR}"
     BUILD_REPO_DIR="${BUILDS_DIR}/${BUILD_REPO_NAME}"
 
     BRANCH=${TRAVIS_BRANCH:-$(git symbolic-ref --short HEAD)}
@@ -240,6 +240,11 @@ if [ $# -gt 0 ]; then
     readonly ORG=$1
     readonly ENDPOINT="user/repos"
     readonly PROTOCOL="ssh"
+    if [ $# -gt 1 ]; then
+        readonly SUBDIR=$2
+    else
+        readonly SUBDIR="build"
+    fi
 else
     readonly ORG="d2-ci"
     readonly ENDPOINT="orgs/${ORG}/repos"

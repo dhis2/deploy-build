@@ -238,15 +238,16 @@ readonly ROOT=$(basename $(pwd))
 
 echo "Script running in: ${scriptDir}"
 
-if [ $# -gt 0 ]; then
+if [ $# -gt 1 ]; then
+    readonly SUBDIR=$2
+else
+    readonly SUBDIR="build"
+fi
+
+if [ $# -gt 0 ] && [ "$1" -ne "d2-ci"]; then
     readonly ORG=$1
     readonly ENDPOINT="user/repos"
     readonly PROTOCOL="ssh"
-    if [ $# -gt 1 ]; then
-        readonly SUBDIR=$2
-    else
-        readonly SUBDIR="build"
-    fi
 else
     readonly ORG="d2-ci"
     readonly ENDPOINT="orgs/${ORG}/repos"

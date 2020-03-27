@@ -16,6 +16,7 @@ require('shelljs/src/ls')
 require('shelljs/src/test')
 require('shelljs/src/mkdir')
 require('shelljs/src/to')
+require('shelljs/src/head')
 
 try {
     const payload = JSON.stringify(github.context.payload, undefined, 2)

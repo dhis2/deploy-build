@@ -5019,14 +5019,18 @@ async function main() {
     const pkg = __webpack_require__(731)
     const cwd = process.cwd()
 
-    if (!pkg.workspaces) {
-        deployRepo({
-            repo: cwd,
-            base: path.basename(cwd),
-            pkg,
-        })
-    } else {
-        // monorepo madness
+    try {
+        if (!pkg.workspaces) {
+            await deployRepo({
+                repo: cwd,
+                base: path.basename(cwd),
+                pkg,
+            })
+        } else {
+            // monorepo madness
+        }
+    } catch (error) {
+        core.setFailed(error.message)
     }
 }
 

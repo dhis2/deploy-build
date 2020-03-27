@@ -31,14 +31,18 @@ async function main() {
     const pkg = require('./package.json')
     const cwd = process.cwd()
 
-    if (!pkg.workspaces) {
-        deployRepo({
-            repo: cwd,
-            base: path.basename(cwd),
-            pkg,
-        })
-    } else {
-        // monorepo madness
+    try {
+        if (!pkg.workspaces) {
+            await deployRepo({
+                repo: cwd,
+                base: path.basename(cwd),
+                pkg,
+            })
+        } else {
+            // monorepo madness
+        }
+    } catch (error) {
+        core.setFailed(error.message)
     }
 }
 

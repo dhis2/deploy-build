@@ -4997,38 +4997,38 @@ const http = __webpack_require__(369)
 const shell = __webpack_require__(739)
 
 try {
-	const payload = JSON.stringify(github.context.payload, undefined, 2)
-	console.log(`The event payload: ${payload}`);
+    const payload = JSON.stringify(github.context.payload, undefined, 2)
+    console.log(`The event payload: ${payload}`)
 
-	main()
+    main()
 } catch (error) {
-	core.setFailed(error.message);
+    core.setFailed(error.message)
 }
 
-async function main () {
+async function main() {
     const pkg = __webpack_require__(731)
     const cwd = process.cwd()
 
     if (!pkg.workspaces) {
-		deployRepo({
-			repo: cwd,
-			base: path.basename(cwd),
-			pkg,
-		})
+        deployRepo({
+            repo: cwd,
+            base: path.basename(cwd),
+            pkg,
+        })
     } else {
         // monorepo madness
     }
 }
 
-async function deployRepo (opts) {
+async function deployRepo(opts) {
     const { base, repo } = opts
 
-	const gh_org = core.getInput('github-org')
-	const gh_usr = core.getInput('github-user')
-	const gh_token = core.getInput('github-token')
-	const build_dir = core.getInput('build-dir')
+    const gh_org = core.getInput('github-org')
+    const gh_usr = core.getInput('github-user')
+    const gh_token = core.getInput('github-token')
+    const build_dir = core.getInput('build-dir')
 
-	const context = github.context
+    const context = github.context
     const octokit = new github.GitHub(gh_token)
 
     const config = {
@@ -5046,11 +5046,9 @@ async function deployRepo (opts) {
     const commit_msg = result.commit.message
     const committer_name = result.commit.committer.name
     const committer_email = result.commit.committer.email
-    const ghRoot = gh_usr
-		? gh_usr
-		: gh_org
+    const ghRoot = gh_usr ? gh_usr : gh_org
 
-    const ref = context.ref || await git.currentBranch(config)
+    const ref = context.ref || (await git.currentBranch(config))
     const short_ref = await format_ref(ref, config)
 
     console.log(result)
@@ -5063,10 +5061,12 @@ async function deployRepo (opts) {
 
     try {
         if (gh_usr) {
-            const create_user_repo = await octokit.repos.createForAuthenticatedUser({
-                name: base,
-                auto_init: true,
-            })
+            const create_user_repo = await octokit.repos.createForAuthenticatedUser(
+                {
+                    name: base,
+                    auto_init: true,
+                }
+            )
             console.log(create_user_repo)
         } else {
             const create_org_repo = await octokit.repos.createInOrg({
@@ -5162,20 +5162,25 @@ async function deployRepo (opts) {
             path.join(repo, 'package.json'),
             path.join(build_repo_path, 'package.json')
         )
+        console.log('cp_pkg', res_cp_pkg.code)
     } else {
         console.log('root package deployment')
         const res_find = shell
             .ls(repo)
-            .filter(f => !f.match(/.*tmp.*/)
-                && !f.match(/.*\.git.*/)
-                && !f.match(/.*node_modules*/)
+            .filter(
+                f =>
+                    !f.match(/.*tmp.*/) &&
+                    !f.match(/.*\.git.*/) &&
+                    !f.match(/.*node_modules*/)
             )
 
         console.log(res_find)
         res_find.map(f => shell.cp('-rf', f, build_repo_path))
     }
 
-    shell.echo(`${new Date()}\n${sha}`).to(path.join(build_repo_path, 'BUILD_INFO'))
+    shell
+        .echo(`${new Date()}\n${sha}`)
+        .to(path.join(build_repo_path, 'BUILD_INFO'))
 
     await git.add({
         ...config,
@@ -5183,7 +5188,7 @@ async function deployRepo (opts) {
         filepath: '.',
     })
 
-    const short_msg = shell.echo(`${commit_msg}`).head({'-n': 1})
+    const short_msg = shell.echo(`${commit_msg}`).head({ '-n': 1 })
 
     const commit_sha = await git.commit({
         ...config,
@@ -5192,7 +5197,7 @@ async function deployRepo (opts) {
         author: {
             name: committer_name,
             email: committer_email,
-        }
+        },
     })
 
     console.log(commit_sha)
@@ -5204,7 +5209,7 @@ async function deployRepo (opts) {
         ref: short_ref,
         remote: 'artifact',
         force: true,
-        onAuth: () => ({ username: gh_token })
+        onAuth: () => ({ username: gh_token }),
     })
 
     console.log('push', res_push)
@@ -40244,7 +40249,7 @@ module.exports = _test;
 /* 731 */
 /***/ (function(module) {
 
-module.exports = {"name":"@dhis2/deploy-build","version":"1.16.2","description":"Deploy build artifacts to a new/existing ${repo}-builds repository ","bin":{"deploy-build":"./deploy-build.sh"},"repository":{"type":"git","url":"git+https://github.com/dhis2/deploy-build.git"},"keywords":["deploy","frontend"],"author":"Viktor Varland","license":"BSD-3-Clause","bugs":{"url":"https://github.com/dhis2/deploy-build/issues"},"private":false,"publishConfig":{"access":"public"},"homepage":"https://github.com/dhis2/deploy-build#readme","dependencies":{"@actions/core":"^1.2.3","@actions/github":"^2.1.1","@octokit/rest":"^17.1.4","isomorphic-git":"^1.0.0","shelljs":"^0.8.3"},"devDependencies":{"@dhis2/cli-style":"^6.0.0","@zeit/ncc":"^0.22.0"},"scripts":{"build":"ncc build index.js"}};
+module.exports = {"name":"@dhis2/deploy-build","version":"1.17.1","description":"Deploy build artifacts to a new/existing ${repo}-builds repository ","bin":{"deploy-build":"./deploy-build.sh"},"repository":{"type":"git","url":"git+https://github.com/dhis2/deploy-build.git"},"keywords":["deploy","frontend"],"author":"Viktor Varland","license":"BSD-3-Clause","bugs":{"url":"https://github.com/dhis2/deploy-build/issues"},"private":false,"publishConfig":{"access":"public"},"homepage":"https://github.com/dhis2/deploy-build#readme","dependencies":{"@actions/core":"^1.2.3","@actions/github":"^2.1.1","@octokit/rest":"^17.1.4","isomorphic-git":"^1.0.0","shelljs":"^0.8.3"},"devDependencies":{"@dhis2/cli-style":"^6.0.0","@zeit/ncc":"^0.22.0"},"scripts":{"build":"ncc build index.js"}};
 
 /***/ }),
 /* 732 */

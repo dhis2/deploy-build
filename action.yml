@@ -17,4 +17,4 @@ inputs:
         default: 'build'
 runs:
     using: 'node12'
-    main: 'deploy-build.js'
+    main: 'index.js'

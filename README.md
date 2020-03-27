@@ -11,14 +11,14 @@ Publishes a build artifact to NPM if the `$TRAVIS_TAG` environment variable exis
 
 Cutting the release is done locally, then the tag is pushed.
 
-Travis runs through the build process and then deploys the artifact to the builds repo, and then publishes the version to NPM. 
+Travis runs through the build process and then deploys the artifact to the builds repo, and then publishes the version to NPM.
 
 ## Requirements
 
-- Travis CLI
-- Github [Personal Access Token](https://github.com/settings/tokens) for
-  build user, unique for the app
-- NPM Token for user [travis4dhis2](https://www.npmjs.com/settings/travis4dhis2/tokens)
+-   Travis CLI
+-   Github [Personal Access Token](https://github.com/settings/tokens) for
+    build user, unique for the app
+-   NPM Token for user [travis4dhis2](https://www.npmjs.com/settings/travis4dhis2/tokens)
 
 ## Setup
 

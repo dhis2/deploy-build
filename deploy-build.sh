@@ -1,31 +1,3 @@
-#!/usr/bin/env bash
-
-###
-# Many thanks to the Angular devs for writing this script which has
-# served as inspiration:
-# https://github.com/angular/angular/blob/master/scripts/ci/publish-build-artifacts.sh
-###
-
-###
-# external environment variables:
-# - GITHUB_TOKEN
-# - CI
-# - TRAVIS_BRANCH
-# - TRAVIS_PULL_REQUEST
-###
-
-# start: shellharden
-if test "$BASH" = "" || "$BASH" -uc "a=();true \"\${a[@]}\"" 2>/dev/null; then
-    # Bash 4.4, Zsh
-    set -euo pipefail
-else
-    # Bash 4.3 and older chokes on empty arrays with set -u.
-    set -eo pipefail
-fi
-set -x # print all commands
-shopt -s nullglob globstar
-# end: shellharden
-
 ###
 #### functions
 ###
@@ -226,11 +198,6 @@ function getJQ {
 ###
 #### start script
 ###
-
-if [ "$TRAVIS_PULL_REQUEST" != "false" ]; then
-    echo "Travis is building a PR, skip deploy."
-    exit 0
-fi
 
 readonly scriptDir=$(cd "$(dirname "$0")"; pwd)
 readonly CREATE_REPOS=1

@@ -8,6 +8,15 @@ const git = require('isomorphic-git')
 const http = require('isomorphic-git/http/node')
 const shell = require('shelljs')
 
+require('shelljs/src/rm')
+require('shelljs/src/find')
+require('shelljs/src/echo')
+require('shelljs/src/cp')
+require('shelljs/src/ls')
+require('shelljs/src/test')
+require('shelljs/src/mkdir')
+require('shelljs/src/to')
+
 try {
     const payload = JSON.stringify(github.context.payload, undefined, 2)
     console.log(`The event payload: ${payload}`)

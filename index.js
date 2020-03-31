@@ -105,6 +105,8 @@ async function deployRepo(opts) {
     const context = github.context
     const octokit = new github.GitHub(gh_token)
 
+    core.info('Deploy build with context and octokit')
+
     const config = {
         fs,
         dir: repo,

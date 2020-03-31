@@ -5690,6 +5690,8 @@ async function deployRepo(opts) {
     const ghRoot = gh_usr ? gh_usr : gh_org
 
     const ref = context.ref || (await git.currentBranch(config))
+    core.info(`git ref: ${ref}`)
+
     const short_ref = await format_ref(ref, config)
     core.info(short_ref)
 

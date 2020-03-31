@@ -36,7 +36,7 @@ async function main() {
     const gh_org = core.getInput('github-org')
     const gh_usr = core.getInput('github-user')
 
-    const pkg = require(path.resolve(cwd, 'package.json'))
+    const pkg = require(path.join(cwd, 'package.json'))
 
     const opts = {
         build_dir,
@@ -46,15 +46,16 @@ async function main() {
         gh_usr,
     }
 
-    core.info(`CWD: ${process.cwd()}`)
-
     core.startGroup('Runtime parameters:')
+    core.info(`CWD: ${process.cwd()}`)
+    core.info(`CWD ls: ${shell.ls(process.cwd())}`)
     core.info('Options for run:')
     core.info(`${JSON.stringify(opts, undefined, 2)}`)
     core.endGroup()
 
     core.startGroup('Loaded package')
-    core.info(path.resolve(cwd, 'package.json'))
+    core.info(`pkg ls: ${shell.ls(cwd)}`)
+    core.info(path.join(cwd, 'package.json'))
     core.info(JSON.stringify(pkg, undefined, 2))
     core.endGroup()
 

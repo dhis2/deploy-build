@@ -856,15 +856,16 @@ async function main() {
         gh_usr,
     }
 
-    core.info(`CWD: ${process.cwd()}`)
-
     core.startGroup('Runtime parameters:')
+    core.info(`CWD: ${process.cwd()}`)
+    core.info(`CWD ls: ${shell.ls(process.cwd())}`)
     core.info('Options for run:')
     core.info(`${JSON.stringify(opts, undefined, 2)}`)
     core.endGroup()
 
     core.startGroup('Loaded package')
-    core.info(__webpack_require__.ab + "deploy-build/" + cwd + '/package.json')
+    core.info(`pkg ls: ${shell.ls(cwd)}`)
+    core.info(path.join(cwd, 'package.json'))
     core.info(JSON.stringify(pkg, undefined, 2))
     core.endGroup()
 

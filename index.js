@@ -117,17 +117,18 @@ async function deployRepo(opts) {
     }
     core.info(`git ref: ${ref}`)
 
-    const short_ref = await format_ref(ref, config)
-    core.info(short_ref)
-
     const config = {
         fs,
         dir: repo,
     }
 
+    const short_ref = await format_ref(ref, config)
+    core.info(short_ref)
+
     const [result] = await git.log({
         ...config,
         depth: 1,
+        ref,
     })
     core.info(result)
 

@@ -46,7 +46,10 @@ async function main() {
         gh_usr,
     }
 
-    core.info('Setup', opts)
+    core.startGroup('options')
+    core.info('Options for run:')
+    core.info(`${JSON.stringify(opts, undefined, 2)}`)
+    core.endGroup()
 
     try {
         if (pkg.workspaces) {

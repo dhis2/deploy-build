@@ -856,9 +856,14 @@ async function main() {
         gh_usr,
     }
 
-    core.startGroup('options')
+    core.startGroup('Runtime parameters:')
     core.info('Options for run:')
-    core.info(`${ JSON.stringify(opts, undefined, 2) }`)
+    core.info(`${JSON.stringify(opts, undefined, 2)}`)
+    core.endGroup()
+
+    core.startGroup('Loaded package')
+    core.info(path.join(cwd, 'package.json'))
+    core.info(JSON.stringify(pkg, undefined, 2))
     core.endGroup()
 
     try {

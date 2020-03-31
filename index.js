@@ -107,6 +107,19 @@ async function deployRepo(opts) {
 
     core.info('Deploy build with context and octokit')
 
+    let ref
+    if (context.head_ref) {
+        core.info('This is a PR build')
+        ref = context.head_ref
+    } else {
+        core.info('This is a push build')
+        ref = context.ref
+    }
+    core.info(`git ref: ${ref}`)
+
+    const short_ref = await format_ref(ref, config)
+    core.info(short_ref)
+
     const config = {
         fs,
         dir: repo,
@@ -134,12 +147,6 @@ async function deployRepo(opts) {
     core.info(committer_email)
 
     const ghRoot = gh_usr ? gh_usr : gh_org
-
-    const ref = context.ref || (await git.currentBranch(config))
-    core.info(`git ref: ${ref}`)
-
-    const short_ref = await format_ref(ref, config)
-    core.info(short_ref)
 
     process.exit(0)
 

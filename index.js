@@ -108,12 +108,7 @@ async function deployRepo(opts) {
     core.info('Deploy build with context and octokit')
     core.info(`context: ${JSON.stringify(context, undefined, 2)}`)
 
-    let ref
-    if (context.eventName == 'pull_request') {
-        ref = context.payload.pull_request.head.ref
-    } else {
-        ref = context.ref
-    }
+    const ref = context.ref
     core.info(`git ref: ${ref}`)
 
     const config = {
@@ -121,9 +116,12 @@ async function deployRepo(opts) {
         dir: repo,
     }
 
+    const short_ref = await format_ref(ref, config)
+    core.info(`short ref: ${short_ref}`)
+
     const [result] = await git.log({
         ...config,
-        ref,
+        ref: short_ref,
         depth: 1,
     })
     core.info(`git log: ${JSON.stringify(result, undefined, 2)}`)
@@ -204,7 +202,7 @@ async function deployRepo(opts) {
             url: build_repo_url,
             dir: build_repo_path,
             depth: 1,
-            ref,
+            ref: short_ref,
             remote: 'artifact',
         })
 
@@ -214,25 +212,25 @@ async function deployRepo(opts) {
             ...config,
             dir: build_repo_path,
             remote: 'artifact',
-            ref,
+            ref: short_ref,
         })
 
-        core.info('switched to branch', ref)
+        core.info('switched to branch', short_ref)
     } catch (e) {
-        core.error('could not fetch ref', ref, e)
+        core.error('could not fetch ref', short_ref, e)
     }
 
     try {
         await git.branch({
             ...config,
             dir: build_repo_path,
-            ref,
+            ref: short_ref,
             checkout: true,
         })
 
-        core.info('created branch', ref)
+        core.info('created branch', short_ref)
     } catch (e) {
-        core.error('failed to create branch', ref, e)
+        core.error('failed to create branch', short_ref, e)
     }
 
     if (shell.test('-d', build_dir)) {
@@ -291,12 +289,29 @@ async function deployRepo(opts) {
     const res_push = await git.push({
         ...config,
         http,
-        ref,
         dir: build_repo_path,
+        ref: short_ref,
         remote: 'artifact',
         force: true,
         onAuth: () => ({ username: gh_token }),
     })
 
     core.info('push', res_push)
+}
+
+async function format_ref(ref, opts) {
+    let full_ref = ref
+    try {
+        full_ref = await git.expandRef({
+            ...opts,
+            ref,
+        })
+    } catch (e) {
+        core.error('could not expand ref')
+    }
+
+    return full_ref
+        .split('/')
+        .slice(2)
+        .join('/')
 }

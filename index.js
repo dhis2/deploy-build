@@ -106,6 +106,7 @@ async function deployRepo(opts) {
     const octokit = new github.GitHub(gh_token)
 
     core.info('Deploy build with context and octokit')
+    core.info(`ref: ${context.ref}`)
 
     let ref
     if (context.head_ref) {

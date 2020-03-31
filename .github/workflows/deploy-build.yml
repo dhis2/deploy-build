@@ -1,0 +1,55 @@
+name: 'deploy-build test (node)'
+
+on: pull_request
+
+env:
+    GH_TOKEN: ${{secrets.GH_TOKEN}}
+
+jobs:
+    single-pkg:
+        runs-on: ubuntu-latest
+        if: "!contains(github.event.head_commit.message, '[skip ci]')"
+        steps:
+            - uses: actions/checkout@v1
+            - uses: actions/setup-node@v1
+              with:
+                  node-version: 12.x
+
+            - uses: ./
+              with:
+                  github-token: ${{ env.GH_TOKEN }}
+                  cwd: ./examples/repo
+
+    single-build-pkg:
+        runs-on: ubuntu-latest
+        if: "!contains(github.event.head_commit.message, '[skip ci]')"
+        steps:
+            - uses: actions/checkout@v1
+            - uses: actions/setup-node@v1
+              with:
+                  node-version: 12.x
+
+            - name: Build
+              run: yarn build
+
+            - uses: ./
+              with:
+                  github-token: ${{ env.GH_TOKEN }}
+                  cwd: ./examples/repo-build
+
+    multiple-pkg:
+        runs-on: ubuntu-latest
+        if: "!contains(github.event.head_commit.message, '[skip ci]')"
+        steps:
+            - uses: actions/checkout@v1
+            - uses: actions/setup-node@v1
+              with:
+                  node-version: 12.x
+
+            - name: Install
+              run: yarn install --frozen-lockfile
+
+            - uses: ./
+              with:
+                  github-token: ${{ env.GH_TOKEN }}
+                  cwd: ./examples/monorepo

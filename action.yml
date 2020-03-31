@@ -1,20 +1,28 @@
 name: 'dhis2: deploy artifact'
 description: 'Deploy a build artifact to a GH organization/user.'
 inputs:
+    cwd:
+        description: ''
+        required: false
+        default: '.'
     github-token:
         description: ''
         required: true
     github-org:
         description: ''
-        required: true
+        required: false
         default: 'd2-ci'
     github-user:
         description: ''
         required: false
     build-dir:
         description: ''
-        required: true
+        required: false
         default: 'build'
+    debug:
+        description: ''
+        required: false
+        default: false
 runs:
     using: 'node12'
     main: 'dist/index.js'

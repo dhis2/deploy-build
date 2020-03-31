@@ -7,7 +7,9 @@ const github = require('@actions/github')
 const git = require('isomorphic-git')
 const http = require('isomorphic-git/http/node')
 const shell = require('shelljs')
+const fg = require('fast-glob')
 
+// workaround to allow NCC to bundle these dynamically loaded modules
 require('shelljs/src/rm')
 require('shelljs/src/find')
 require('shelljs/src/echo')
@@ -28,18 +30,56 @@ try {
 }
 
 async function main() {
+    const build_dir = core.getInput('build-dir')
+    const cwd = core.getInput('cwd')
+    const debug = core.getInput('debug')
+    const gh_token = core.getInput('github-token')
+    const gh_org = core.getInput('github-org')
+    const gh_usr = core.getInput('github-user')
+
     const pkg = require('./package.json')
-    const cwd = process.cwd()
+
+    const opts = {
+        build_dir,
+        cwd,
+        debug,
+        gh_token,
+        gh_org,
+        gh_usr,
+    }
 
     try {
-        if (!pkg.workspaces) {
+        if (pkg.workspaces) {
+            const ws = await fg(pkg.workspaces, {
+                onlyDirectories: true,
+                dot: false,
+            })
+
+            console.log(ws)
+
+            Promise.all(
+                ws.map(async w => {
+                    const wsPkg = await fg(['package.json'], {
+                        cwd: w,
+                    })
+
+                    console.log(wsPkg)
+
+                    await deployRepo({
+                        ...opts,
+                        repo: w,
+                        base: path.basename(w),
+                        pkg: wsPkg,
+                    })
+                })
+            )
+        } else {
             await deployRepo({
+                ...opts,
                 repo: cwd,
                 base: path.basename(cwd),
                 pkg,
             })
-        } else {
-            // monorepo madness
         }
     } catch (error) {
         core.setFailed(error.message)
@@ -47,12 +87,7 @@ async function main() {
 }
 
 async function deployRepo(opts) {
-    const { base, repo } = opts
-
-    const gh_org = core.getInput('github-org')
-    const gh_usr = core.getInput('github-user')
-    const gh_token = core.getInput('github-token')
-    const build_dir = core.getInput('build-dir')
+    const { base, repo, gh_org, gh_usr, gh_token, build_dir, debug } = opts
 
     const context = github.context
     const octokit = new github.GitHub(gh_token)
@@ -77,13 +112,17 @@ async function deployRepo(opts) {
     const ref = context.ref || (await git.currentBranch(config))
     const short_ref = await format_ref(ref, config)
 
-    console.log(result)
-    console.log(sha)
-    console.log(short_sha)
-    console.log(commit_msg)
-    console.log(committer_name)
-    console.log(committer_email)
-    console.log(short_ref)
+    if (debug) {
+        console.log(result)
+        console.log(sha)
+        console.log(short_sha)
+        console.log(commit_msg)
+        console.log(committer_name)
+        console.log(committer_email)
+        console.log(short_ref)
+    }
+
+    process.exit(0)
 
     try {
         if (gh_usr) {
@@ -103,20 +142,16 @@ async function deployRepo(opts) {
             console.log(create_org_repo)
         }
     } catch (e) {
-        console.log(e)
+        console.log('Failed to create the repo, probably exists, which is OK!')
+        if (debug) {
+            console.log(e)
+        }
     }
 
     const build_repo_url = `https://github.com/${ghRoot}/${base}.git`
-    console.log(build_repo_url)
-
     const build_repo_path = path.join('tmp', base)
-    console.log(build_repo_path)
-
     const res_rm = shell.rm('-rf', build_repo_path)
-    console.log('rm', res_rm.code)
-
     const res_mkd = shell.mkdir('-p', build_repo_path)
-    console.log('mkdir', res_mkd.code)
 
     await git.init({
         ...config,
@@ -135,7 +170,13 @@ async function deployRepo(opts) {
         url: build_repo_url,
     })
 
-    console.log(remote_info)
+    if (debug) {
+        console.log(build_repo_url)
+        console.log(build_repo_path)
+        console.log('rm', res_rm.code)
+        console.log('mkdir', res_mkd.code)
+        console.log(remote_info)
+    }
 
     try {
         const res_fetch = await git.fetch({

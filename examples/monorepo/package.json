@@ -1,0 +1,7 @@
+{
+    "name": "deploy-build-test-monorepo",
+    "version": "1.0.0",
+    "workspaces": [
+        "packages/*"
+    ]
+}

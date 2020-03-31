@@ -11,8 +11,6 @@ jobs:
         if: "!contains(github.event.head_commit.message, '[skip ci]')"
         steps:
             - uses: actions/checkout@v2
-              with:
-                  ref: ${{ github.event.pull_request.head.sha }}
             - uses: actions/setup-node@v1
               with:
                   node-version: 12.x
@@ -27,8 +25,6 @@ jobs:
         if: "!contains(github.event.head_commit.message, '[skip ci]')"
         steps:
             - uses: actions/checkout@v2
-              with:
-                  ref: ${{ github.event.pull_request.head.sha }}
             - uses: actions/setup-node@v1
               with:
                   node-version: 12.x
@@ -46,8 +42,6 @@ jobs:
         if: "!contains(github.event.head_commit.message, '[skip ci]')"
         steps:
             - uses: actions/checkout@v2
-              with:
-                  ref: ${{ github.event.pull_request.head.sha }}
             - uses: actions/setup-node@v1
               with:
                   node-version: 12.x

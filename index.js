@@ -106,9 +106,13 @@ async function deployRepo(opts) {
     const octokit = new github.GitHub(gh_token)
 
     core.info('Deploy build with context and octokit')
-    core.info(`ref: ${context.ref}`)
 
-    const ref = context.ref
+    let ref
+    if (context.pull_request) {
+        ref = context.pull_request.head.ref
+    } else {
+        ref = context.ref
+    }
     core.info(`git ref: ${ref}`)
 
     const config = {
@@ -122,7 +126,6 @@ async function deployRepo(opts) {
     const [result] = await git.log({
         ...config,
         depth: 1,
-        ref,
     })
     core.info(`git log: ${JSON.stringify(result, undefined, 2)}`)
 

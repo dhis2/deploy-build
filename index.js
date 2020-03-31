@@ -37,7 +37,7 @@ async function main() {
     const gh_org = core.getInput('github-org')
     const gh_usr = core.getInput('github-user')
 
-    const pkg = require('./package.json')
+    const pkg = require(path.join(cwd, '/package.json'))
 
     const opts = {
         build_dir,

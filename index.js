@@ -110,7 +110,7 @@ async function deployRepo(opts) {
 
     let ref
     if (context.eventName == 'pull_request') {
-        ref = context.pull_request.head.ref
+        ref = context.payload.pull_request.head.ref
     } else {
         ref = context.ref
     }

@@ -19,10 +19,6 @@ inputs:
         description: ''
         required: false
         default: 'build'
-    debug:
-        description: ''
-        required: false
-        default: false
 runs:
     using: 'node12'
     main: 'dist/index.js'

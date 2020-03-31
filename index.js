@@ -10,6 +10,7 @@ const shell = require('shelljs')
 const fg = require('fast-glob')
 
 // workaround to allow NCC to bundle these dynamically loaded modules
+require('shelljs/src/cat')
 require('shelljs/src/rm')
 require('shelljs/src/find')
 require('shelljs/src/echo')
@@ -36,7 +37,8 @@ async function main() {
     const gh_org = core.getInput('github-org')
     const gh_usr = core.getInput('github-user')
 
-    const pkg = require(path.join(cwd, 'package.json'))
+    const pkg_path = path.join(cwd, 'package.json')
+    const pkg = JSON.parse(shell.cat(pkg_path))
 
     const opts = {
         build_dir,

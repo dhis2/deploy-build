@@ -5667,6 +5667,11 @@ async function deployRepo(opts) {
     let ref
     if (context.head_ref) {
         core.info('This is a PR build')
+        const branch = await git.currentBranch({
+            fs,
+            dir: repo,
+        })
+        core.info(`branch: ${branch}`)
         ref = context.head_ref
     } else {
         core.info('This is a push build')

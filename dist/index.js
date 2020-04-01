@@ -5675,26 +5675,19 @@ async function deployRepo(opts) {
     const short_ref = await format_ref(ref, config)
     core.info(`short ref: ${short_ref}`)
 
-    const [result] = await git.log({
-        ...config,
-        ref: short_ref,
-        depth: 1,
-    })
-    core.info(`git log: ${JSON.stringify(result, undefined, 2)}`)
-
-    const sha = result.oid
+    const sha = context.sha
     core.info(sha)
 
     const short_sha = sha.substring(0, 7)
     core.info(short_sha)
 
-    const commit_msg = result.commit.message
+    const commit_msg = context.payload.head_commit.message
     core.info(commit_msg)
 
-    const committer_name = result.commit.committer.name
+    const committer_name = context.payload.head_commit.committer.name
     core.info(committer_name)
 
-    const committer_email = result.commit.committer.email
+    const committer_email = context.payload.head_commit.committer.email
     core.info(committer_email)
 
     const ghRoot = gh_usr ? gh_usr : gh_org
@@ -5819,7 +5812,7 @@ async function deployRepo(opts) {
     }
 
     shell
-        .echo(`${new Date()}\n${sha}`)
+        .echo(`${new Date()}\n${sha}\n${context.payload.head_commit.url}\n`)
         .to(path.join(build_repo_path, 'BUILD_INFO'))
 
     await git.add({

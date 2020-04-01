@@ -5624,7 +5624,7 @@ async function main() {
                 dot: false,
             })
 
-            core.info(ws)
+            core.info(`workspaces: ${ws}`)
 
             Promise.all(
                 ws.map(async w => {
@@ -5632,7 +5632,7 @@ async function main() {
                         cwd: w,
                     })
 
-                    core.info(wsPkg)
+                    core.info(`ws pkg: ${wsPkg}`)
 
                     await deployRepo({
                         ...opts,
@@ -5677,19 +5677,19 @@ async function deployRepo(opts) {
     core.info(`short ref: ${short_ref}`)
 
     const sha = context.sha
-    core.info(sha)
+    core.info(`sha: ${sha}`)
 
     const short_sha = sha.substring(0, 7)
-    core.info(short_sha)
+    core.info(`short sha: ${short_sha}`)
 
     const commit_msg = context.payload.head_commit.message
-    core.info(commit_msg)
+    core.info(`commit message: ${commit_msg}`)
 
     const committer_name = context.payload.head_commit.committer.name
-    core.info(committer_name)
+    core.info(`committer name: ${committer_name}`)
 
     const committer_email = context.payload.head_commit.committer.email
-    core.info(committer_email)
+    core.info(`committer email: ${committer_email}`)
 
     const ghRoot = gh_usr ? gh_usr : gh_org
 
@@ -5705,14 +5705,14 @@ async function deployRepo(opts) {
                     auto_init: true,
                 }
             )
-            core.info(create_user_repo)
+            core.info(`create user repo: ${create_user_repo}`)
         } else {
             const create_org_repo = await octokit.repos.createInOrg({
                 name: repo_name,
                 org: gh_org,
                 auto_init: true,
             })
-            core.info(create_org_repo)
+            core.info(`create org repo: ${create_org_repo}`)
         }
     } catch (e) {
         core.warning('Failed to create the repo, probably exists, which is OK!')
@@ -5723,13 +5723,13 @@ async function deployRepo(opts) {
     core.info(`build repo url: ${build_repo_url}`)
 
     const build_repo_path = path.join('tmp', base)
-    core.info(build_repo_path)
+    core.info(`build repo path: ${build_repo_path}`)
 
     const res_rm = shell.rm('-rf', build_repo_path)
-    core.info('rm', res_rm.code)
+    core.info(`rm: ${res_rm.code}`)
 
     const res_mkd = shell.mkdir('-p', build_repo_path)
-    core.info('mkdir', res_mkd.code)
+    core.info(`mkdir ${res_mkd.code}`)
 
     await git.init({
         ...config,
@@ -5747,7 +5747,7 @@ async function deployRepo(opts) {
         http,
         url: build_repo_url,
     })
-    core.info(remote_info)
+    core.info(`remote info: ${remote_info}`)
 
     try {
         const res_fetch = await git.fetch({
@@ -5760,7 +5760,7 @@ async function deployRepo(opts) {
             remote: 'artifact',
         })
 
-        core.info(res_fetch)
+        core.info(`remote fetch ${res_fetch}`)
 
         await git.checkout({
             ...config,
@@ -5769,9 +5769,10 @@ async function deployRepo(opts) {
             ref: short_ref,
         })
 
-        core.info('switched to branch', short_ref)
+        core.info(`switched to branch: ${short_ref}`)
     } catch (e) {
-        core.error('could not fetch ref', short_ref, e)
+        core.warning(`could not fetch ref: ${short_ref}`)
+        core.debug(e)
     }
 
     try {
@@ -5782,9 +5783,10 @@ async function deployRepo(opts) {
             checkout: true,
         })
 
-        core.info('created branch', short_ref)
+        core.info(`created branch: ${short_ref}`)
     } catch (e) {
-        core.error('failed to create branch', short_ref, e)
+        core.warning(`failed to create branch: ${short_ref}`)
+        core.debug(e)
     }
 
     if (shell.test('-d', build_dir)) {
@@ -5794,13 +5796,13 @@ async function deployRepo(opts) {
             path.join(build_dir, '*'),
             build_repo_path
         )
-        core.info('cp', res_cp_build.code)
+        core.info(`cp build: ${res_cp_build.code}`)
 
         const res_cp_pkg = shell.cp(
             path.join(repo, 'package.json'),
             path.join(build_repo_path, 'package.json')
         )
-        core.info('cp_pkg', res_cp_pkg.code)
+        core.info(`cp pkg: ${res_cp_pkg.code}`)
     } else {
         core.info('root package deployment')
         const res_find = shell
@@ -5812,7 +5814,7 @@ async function deployRepo(opts) {
                     !f.match(/.*node_modules*/)
             )
 
-        core.info(res_find)
+        core.info(`find: ${res_find}`)
         res_find.map(f => shell.cp('-rf', f, build_repo_path))
     }
 
@@ -5838,7 +5840,7 @@ async function deployRepo(opts) {
         },
     })
 
-    core.info(commit_sha)
+    core.info(`commit sha: ${commit_sha}`)
 
     const res_push = await git.push({
         ...config,
@@ -5850,7 +5852,7 @@ async function deployRepo(opts) {
         onAuth: () => ({ username: gh_token }),
     })
 
-    core.info('push', res_push)
+    core.info(`push: ${res_push}`)
 }
 
 async function format_ref(ref, opts) {
@@ -5861,7 +5863,7 @@ async function format_ref(ref, opts) {
             ref,
         })
     } catch (e) {
-        core.error('could not expand ref')
+        core.warning('could not expand ref')
     }
 
     return full_ref

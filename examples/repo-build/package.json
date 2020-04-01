@@ -1,0 +1,10 @@
+{
+    "name": "deploy-build-test-repo-build",
+    "version": "1.0.0",
+    "main": "index.js",
+    "license": "MIT",
+    "private": false,
+    "scripts": {
+        "build": "rm -rf build && mkdir build && cp index.js build"
+    }
+}

@@ -1,5 +1,5 @@
 {
-    "name": "deploy-build-test-repo-build",
+    "name": "deploy-build-test-monorepo-build-b",
     "version": "1.0.0",
     "main": "index.js",
     "license": "MIT",

@@ -2,21 +2,21 @@ name: 'dhis2: deploy artifact'
 description: 'Deploy a build artifact to a GH organization/user.'
 inputs:
     cwd:
-        description: ''
+        description: 'Overrides the current working directory.'
         required: false
         default: '.'
     github-token:
-        description: ''
+        description: 'The GitHub PAT to use to act on the build repo.'
         required: true
     github-org:
-        description: ''
+        description: 'The GitHub organization to push the build repo to.'
         required: false
         default: 'd2-ci'
     github-user:
-        description: ''
+        description: 'The GitHub user to push the build repo to, if supplied, overrides the github-org setting.'
         required: false
     build-dir:
-        description: ''
+        description: 'Overrides the build directory to use as artifact to deploy.'
         required: false
         default: 'build'
 runs:

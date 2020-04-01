@@ -184,33 +184,33 @@ async function deployRepo(opts) {
         core.debug(e.message)
     }
 
-    const build_repo_url = `https://github.com/${ghRoot}/${repo_name}.git`
-    core.info(`build repo url: ${build_repo_url}`)
+    const artifact_repo_url = `https://github.com/${ghRoot}/${repo_name}.git`
+    core.info(`artifact repo url: ${artifact_repo_url}`)
 
-    const build_repo_path = path.join('tmp', base)
-    core.info(`build repo path: ${build_repo_path}`)
+    const artifact_repo_path = path.join('tmp', base)
+    core.info(`build repo path: ${artifact_repo_path}`)
 
-    const res_rm = shell.rm('-rf', build_repo_path)
+    const res_rm = shell.rm('-rf', artifact_repo_path)
     core.info(`rm: ${res_rm.code}`)
 
-    const res_mkd = shell.mkdir('-p', build_repo_path)
-    core.info(`mkdir ${res_mkd.code}`)
+    const res_mkd = shell.mkdir('-p', artifact_repo_path)
+    core.info(`mkdir: ${res_mkd.code}`)
 
     await git.init({
         ...config,
-        dir: build_repo_path,
+        dir: artifact_repo_path,
     })
 
     await git.addRemote({
         ...config,
-        dir: build_repo_path,
+        dir: artifact_repo_path,
         remote: 'artifact',
-        url: build_repo_url,
+        url: artifact_repo_url,
     })
 
     const remote_info = await git.getRemoteInfo({
         http,
-        url: build_repo_url,
+        url: artifact_repo_url,
     })
     core.info(`remote info: ${remote_info}`)
 
@@ -218,8 +218,8 @@ async function deployRepo(opts) {
         const res_fetch = await git.fetch({
             ...config,
             http,
-            url: build_repo_url,
-            dir: build_repo_path,
+            url: artifact_repo_url,
+            dir: artifact_repo_path,
             depth: 1,
             ref: short_ref,
             remote: 'artifact',
@@ -229,7 +229,7 @@ async function deployRepo(opts) {
 
         await git.checkout({
             ...config,
-            dir: build_repo_path,
+            dir: artifact_repo_path,
             remote: 'artifact',
             ref: short_ref,
         })
@@ -243,7 +243,7 @@ async function deployRepo(opts) {
     try {
         await git.branch({
             ...config,
-            dir: build_repo_path,
+            dir: artifact_repo_path,
             ref: short_ref,
             checkout: true,
         })
@@ -259,13 +259,13 @@ async function deployRepo(opts) {
         const res_cp_build = shell.cp(
             '-r',
             path.join(build_dir, '*'),
-            build_repo_path
+            artifact_repo_path
         )
         core.info(`cp build: ${res_cp_build.code}`)
 
         const res_cp_pkg = shell.cp(
             path.join(repo, 'package.json'),
-            path.join(build_repo_path, 'package.json')
+            path.join(artifact_repo_path, 'package.json')
         )
         core.info(`cp pkg: ${res_cp_pkg.code}`)
     } else {
@@ -280,16 +280,16 @@ async function deployRepo(opts) {
             )
 
         core.info(`find: ${res_find}`)
-        res_find.map(f => shell.cp('-rf', f, build_repo_path))
+        res_find.map(f => shell.cp('-rf', f, artifact_repo_path))
     }
 
     shell
         .echo(`${new Date()}\n${sha}\n${context.payload.head_commit.url}\n`)
-        .to(path.join(build_repo_path, 'BUILD_INFO'))
+        .to(path.join(artifact_repo_path, 'BUILD_INFO'))
 
     await git.add({
         ...config,
-        dir: build_repo_path,
+        dir: artifact_repo_path,
         filepath: '.',
     })
 
@@ -297,7 +297,7 @@ async function deployRepo(opts) {
 
     const commit_sha = await git.commit({
         ...config,
-        dir: build_repo_path,
+        dir: artifact_repo_path,
         message: `${short_sha} ${short_msg}`,
         author: {
             name: committer_name,
@@ -310,7 +310,7 @@ async function deployRepo(opts) {
     const res_push = await git.push({
         ...config,
         http,
-        dir: build_repo_path,
+        dir: artifact_repo_path,
         ref: short_ref,
         remote: 'artifact',
         force: true,

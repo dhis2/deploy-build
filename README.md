@@ -1,98 +1,37 @@
-# build tools
+# deploy-build
 
-## deploy-build.sh
+GitHub Action to deploy an artifact to another organization on GitHub.
 
-Deploys a build artifact from `dhis2/$REPO_NAME` to `d2-ci/${REPO_NAME}`.
-These builds can be pulled from NPM and can be built into the backend.
+DHIS2 uses this to store our build artifacts for repos under
+github.com/dhis2 at github.com/d2-ci.
 
-## publish-build.sh
+E.g. dhis2/maintenance-app gets build and the artifact of that gets put
+in d2-ci/maintenance-app.
 
-Publishes a build artifact to NPM if the `$TRAVIS_TAG` environment variable exists.
+More information about the build system and the role d2-ci plays is
+available at the [developer
+portal](https://developers.dhis2.org/2019/02/the-build-system/#d2-ci-organisation).
 
-Cutting the release is done locally, then the tag is pushed.
+# Usage
 
-Travis runs through the build process and then deploys the artifact to the builds repo, and then publishes the version to NPM.
+Create a workflow, or use the example in
+[dhis2/workflows](https://github.com/dhis2/workflows/blob/master/ci/dhis2-artifacts.yml)
+as a base.
 
-## Requirements
-
--   Travis CLI
--   Github [Personal Access Token](https://github.com/settings/tokens) for
-    build user, unique for the app
--   NPM Token for user [travis4dhis2](https://www.npmjs.com/settings/travis4dhis2/tokens)
-
-## Setup
-
-Create `.travis.yml`:
+To use in an existing workflow, add the action to a step after the build
+process:
 
 ```
-travis init
+- uses: dhis2/deploy-build@master
+  with:
+      github-token: ${{ env.GH_TOKEN }}
 ```
 
-Add the encrypted PAT for the app:
+We use `GH_TOKEN` and not `GITHUB_TOKEN` to distinguish between the user
+who pushed (`GITHUB_TOKEN`) and the PAT of our bot account (`GH_TOKEN`).
 
-```
-travis encrypt GITHUB_TOKEN=<github access token here> --add
-travis encrypt NPM_TOKEN=<npm access token here> --add
-```
+# Options
 
-Example `.travis.yml`:
-
-```
-language: node_js
-node_js:
-- 8
-before_script:
-- npm install --global @dhis2/deploy-build
-script:
-- npm run lint
-- npm run coverage
-- npm run build
-deploy:
-- provider: script
-  script: deploy-build
-  skip_cleanup: true
-  on:
-    all_branches: true
-- provider: script
-  script: publish-build
-  skip_cleanup: true
-  on:
-    tags: true
-env:
-  global:
-    secure: <encrypted PAT>
-    secure: <encrypted PAT>
-```
-
-# Deploy manually to your own Github account
-
-To deploy a build to your personal github account:
-
-```
-npm install --global @dhis2/deploy-build
-export GITHUB_TOKEN=<github token>
-deploy-build <github username>
-```
-
-# Caveats
-
-## Turn off PR builds in Travis, only use branch builds
-
-If you see commits like: `c9e0584 Merge 46e1c4787... into 8741c7c88...` in your builds repo and don't want them, then turn off the PR builds and just use branch builds.
-
-Travis build the merge commit between the branch and the base, and set the `TRAVIS_BRANCH` env variable to [the base branch](https://docs.travis-ci.com/user/environment-variables#default-environment-variables), which often means master.
-
-By leaving the PR builds off and the branch buils on you still get the benefits of your branch being built and deployed, but avoid the merge commit builds in your master stream.
-
-# Install dependency from GitHub, e.g. for DHIS2 core
-
-```
-# for master branch
-npm install ${app}@dhis2/${app}
-
-# for 2.30
-npm install ${app}@dhis2/${app}#2.30
-
-# for random feature branch
-npm install ${app}@dhis2/${app}#feature/random-branch-name
-```
+See the [`action.yml`](action.yml) file for an overview of the
+configuration possibilities. In DHIS2 scenarios, the defaults should be
+sane.

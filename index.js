@@ -100,7 +100,7 @@ async function main() {
 }
 
 async function deployRepo(opts) {
-    const { base, repo, gh_org, gh_usr, gh_token, build_dir } = opts
+    const { base, repo, gh_org, gh_usr, gh_token, build_dir, pkg } = opts
 
     const context = github.context
     const octokit = new github.GitHub(gh_token)
@@ -136,18 +136,21 @@ async function deployRepo(opts) {
 
     const ghRoot = gh_usr ? gh_usr : gh_org
 
+    // drop the scope from e.g. @dhis2/foobar to foobar
+    const repo_name = pkg.name.split('/')[1]
+
     try {
         if (gh_usr) {
             const create_user_repo = await octokit.repos.createForAuthenticatedUser(
                 {
-                    name: base,
+                    name: repo_name,
                     auto_init: true,
                 }
             )
             core.info(create_user_repo)
         } else {
             const create_org_repo = await octokit.repos.createInOrg({
-                name: base,
+                name: repo_name,
                 org: gh_org,
                 auto_init: true,
             })
@@ -158,7 +161,7 @@ async function deployRepo(opts) {
         core.debug(e)
     }
 
-    const build_repo_url = `https://github.com/${ghRoot}/${base}.git`
+    const build_repo_url = `https://github.com/${ghRoot}/${repo_name}.git`
     core.info(build_repo_url)
 
     const build_repo_path = path.join('tmp', base)

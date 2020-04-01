@@ -5624,6 +5624,7 @@ async function main() {
             const ws = await fg(pkg.workspaces, {
                 onlyDirectories: true,
                 dot: false,
+                cwd,
             })
 
             core.info(`workspaces: ${ws}`)

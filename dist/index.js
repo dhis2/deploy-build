@@ -5716,7 +5716,7 @@ async function deployRepo(opts) {
         }
     } catch (e) {
         core.warning('Failed to create the repo, probably exists, which is OK!')
-        core.debug(e)
+        core.debug(e.message)
     }
 
     const build_repo_url = `https://github.com/${ghRoot}/${repo_name}.git`
@@ -5772,7 +5772,7 @@ async function deployRepo(opts) {
         core.info(`switched to branch: ${short_ref}`)
     } catch (e) {
         core.warning(`could not fetch ref: ${short_ref}`)
-        core.debug(e)
+        core.debug(e.message)
     }
 
     try {
@@ -5786,7 +5786,7 @@ async function deployRepo(opts) {
         core.info(`created branch: ${short_ref}`)
     } catch (e) {
         core.warning(`failed to create branch: ${short_ref}`)
-        core.debug(e)
+        core.debug(e.message)
     }
 
     if (shell.test('-d', build_dir)) {

@@ -105,8 +105,9 @@ async function deployRepo(opts) {
     const context = github.context
     const octokit = new github.GitHub(gh_token)
 
-    core.info('Deploy build with context and octokit')
+    core.startGroup('GH Context')
     core.info(`context: ${JSON.stringify(context, undefined, 2)}`)
+    core.endGroup()
 
     const ref = context.ref
     core.info(`git ref: ${ref}`)
@@ -163,7 +164,7 @@ async function deployRepo(opts) {
     }
 
     const build_repo_url = `https://github.com/${ghRoot}/${repo_name}.git`
-    core.info(build_repo_url)
+    core.info(`build repo url: ${build_repo_url}`)
 
     const build_repo_path = path.join('tmp', base)
     core.info(build_repo_path)

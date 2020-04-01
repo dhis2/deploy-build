@@ -65,7 +65,7 @@ async function main() {
         if (pkg.workspaces) {
             core.info(`found workspaces: ${pkg.workspaces}`)
 
-            const ws = await fg(pkg.workspaces, {
+            const ws = fg.sync(pkg.workspaces, {
                 onlyDirectories: true,
                 dot: false,
                 cwd,
@@ -75,7 +75,7 @@ async function main() {
 
             Promise.all(
                 ws.map(async w => {
-                    const wsPkg = await fg(['package.json'], {
+                    const wsPkg = fg.sync(['package.json'], {
                         cwd: w,
                     })
 
@@ -83,6 +83,7 @@ async function main() {
 
                     await deployRepo({
                         ...opts,
+                        cwd: w,
                         repo: w,
                         base: path.basename(w),
                         pkg: wsPkg,

@@ -5619,6 +5619,8 @@ async function main() {
 
     try {
         if (pkg.workspaces) {
+            core.info(`found workspaces: ${pkg.workspaces}`)
+
             const ws = await fg(pkg.workspaces, {
                 onlyDirectories: true,
                 dot: false,

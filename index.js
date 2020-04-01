@@ -75,18 +75,23 @@ async function main() {
 
             Promise.all(
                 ws.map(async w => {
-                    const wsPkg = fg.sync(['package.json'], {
-                        cwd: w,
+                    core.info(`workspace: ${w}`)
+                    const ws_cwd = path.join(cwd, w)
+
+                    const [wsPkg] = fg.sync(['package.json'], {
+                        cwd: ws_cwd,
                     })
 
                     core.info(`ws pkg: ${wsPkg}`)
 
+                    const ws_pkg = JSON.parse(shell.cat(wsPkg))
+
                     await deployRepo({
                         ...opts,
-                        cwd: w,
+                        cwd: ws_cwd,
                         repo: w,
                         base: path.basename(w),
-                        pkg: wsPkg,
+                        pkg: ws_pkg,
                     })
                 })
             )

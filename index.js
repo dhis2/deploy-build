@@ -137,7 +137,8 @@ async function deployRepo(opts) {
     const ghRoot = gh_usr ? gh_usr : gh_org
 
     // drop the scope from e.g. @dhis2/foobar to foobar
-    const repo_name = pkg.name.split('/')[1]
+    const repo_name = path.basename(pkg.name)
+    core.info(`build repo name: ${repo_name}`)
 
     try {
         if (gh_usr) {

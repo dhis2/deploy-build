@@ -20,7 +20,7 @@ jobs:
                   github-token: ${{ env.GH_TOKEN }}
                   cwd: ./examples/repo
 
-    single-build-pkg:
+    single-pkg-build:
         runs-on: ubuntu-latest
         if: "!contains(github.event.head_commit.message, '[skip ci]')"
         steps:
@@ -55,3 +55,25 @@ jobs:
               with:
                   github-token: ${{ env.GH_TOKEN }}
                   cwd: ./examples/monorepo
+
+    multiple-pkg-build:
+        runs-on: ubuntu-latest
+        if: "!contains(github.event.head_commit.message, '[skip ci]')"
+        steps:
+            - uses: actions/checkout@v2
+            - uses: actions/setup-node@v1
+              with:
+                  node-version: 12.x
+
+            - name: Install
+              run: yarn install --frozen-lockfile
+
+            - name: Build
+              run: |
+                  cd examples/monorepo-build
+                  yarn build
+
+            - uses: ./
+              with:
+                  github-token: ${{ env.GH_TOKEN }}
+                  cwd: ./examples/monorepo-build

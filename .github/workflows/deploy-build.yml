@@ -1,6 +1,6 @@
 name: 'deploy-build test (node)'
 
-on: pull_request
+on: push
 
 env:
     GH_TOKEN: ${{secrets.GH_TOKEN}}

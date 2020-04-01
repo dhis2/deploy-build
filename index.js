@@ -80,19 +80,31 @@ async function main() {
 
                     const [wsPkg] = fg.sync(['package.json'], {
                         cwd: ws_cwd,
+                        onlyFiles: true,
+                        absolute: true,
+                        dot: false,
                     })
 
                     core.info(`ws pkg: ${wsPkg}`)
 
                     const ws_pkg = JSON.parse(shell.cat(wsPkg))
 
-                    await deployRepo({
-                        ...opts,
-                        cwd: ws_cwd,
-                        repo: w,
-                        base: path.basename(w),
-                        pkg: ws_pkg,
-                    })
+                    core.startGroup('Loaded WS package')
+                    core.info(`path: ${wsPkg}`)
+                    core.info(JSON.stringify(ws_pkg, undefined, 2))
+                    core.endGroup()
+
+                    try {
+                        await deployRepo({
+                            ...opts,
+                            cwd: ws_cwd,
+                            repo: ws_cwd,
+                            base: path.basename(ws_cwd),
+                            pkg: ws_pkg,
+                        })
+                    } catch (e) {
+                        core.setFailed(e.message)
+                    }
                 })
             )
         } else {

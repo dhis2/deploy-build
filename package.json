@@ -33,7 +33,7 @@
     },
     "devDependencies": {
         "@dhis2/cli-style": "^6.0.0",
-        "@zeit/ncc": "^0.22.0"
+        "@zeit/ncc": "^0.22.1"
     },
     "scripts": {
         "build": "ncc build index.js"

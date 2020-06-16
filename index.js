@@ -9,6 +9,8 @@ const http = require('isomorphic-git/http/node')
 const shell = require('shelljs')
 const fg = require('fast-glob')
 
+shell.config.verbose = true
+
 // workaround to allow NCC to bundle these dynamically loaded modules
 require('shelljs/src/cat')
 require('shelljs/src/rm')
@@ -259,6 +261,7 @@ async function deployRepo(opts) {
     }
 
     const artifact_build_dir = path.join(repo, build_dir)
+
     if (shell.test('-d', artifact_build_dir)) {
         core.info(`copy build artifacts: ${artifact_build_dir}`)
         const res_cp_build = shell.cp(

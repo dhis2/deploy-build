@@ -5565,6 +5565,8 @@ const http = __webpack_require__(369)
 const shell = __webpack_require__(739)
 const fg = __webpack_require__(406)
 
+shell.config.verbose = true
+
 // workaround to allow NCC to bundle these dynamically loaded modules
 __webpack_require__(833)
 __webpack_require__(272)
@@ -5815,6 +5817,7 @@ async function deployRepo(opts) {
     }
 
     const artifact_build_dir = path.join(repo, build_dir)
+
     if (shell.test('-d', artifact_build_dir)) {
         core.info(`copy build artifacts: ${artifact_build_dir}`)
         const res_cp_build = shell.cp(

@@ -21,6 +21,8 @@ require('shelljs/src/mkdir')
 require('shelljs/src/to')
 require('shelljs/src/head')
 
+shell.config.verbose = true
+
 try {
     const payload = JSON.stringify(github.context.payload, undefined, 2)
     core.debug(`The event payload: ${payload}`)
@@ -31,14 +33,16 @@ try {
 }
 
 async function main() {
+    core.startGroup('Runtime parameters:')
+    core.info(`CWD: ${process.cwd()}`)
+    core.info(`CWD ls: ${shell.ls(process.cwd())}`)
+    core.endGroup()
+
     const build_dir = core.getInput('build-dir')
-    const cwd = core.getInput('cwd')
+    const cwd = path.resolve(process.cwd(), core.getInput('cwd'))
     const gh_token = core.getInput('github-token')
     const gh_org = core.getInput('github-org')
     const gh_usr = core.getInput('github-user')
-
-    const pkg_path = path.join(cwd, 'package.json')
-    const pkg = JSON.parse(shell.cat(pkg_path))
 
     const opts = {
         build_dir,
@@ -48,16 +52,16 @@ async function main() {
         gh_usr,
     }
 
-    core.startGroup('Runtime parameters:')
-    core.info(`CWD: ${process.cwd()}`)
-    core.info(`CWD ls: ${shell.ls(process.cwd())}`)
-    core.info('Options for run:')
+    core.startGroup('Options for run:')
     core.info(`${JSON.stringify(opts, undefined, 2)}`)
     core.endGroup()
 
+    const pkg_path = path.join(cwd, 'package.json')
+    const pkg = JSON.parse(shell.cat(pkg_path))
+
     core.startGroup('Loaded package')
     core.info(`pkg ls: ${shell.ls(cwd)}`)
-    core.info(path.join(cwd, 'package.json'))
+    core.info(`pkg path: ${pkg_path}`)
     core.info(JSON.stringify(pkg, undefined, 2))
     core.endGroup()
 
@@ -77,27 +81,27 @@ async function main() {
                 ws.map(async w => {
                     core.info(`workspace: ${w}`)
                     const ws_cwd = path.join(cwd, w)
+                    core.info(`ws cwd: ${ws_cwd}`)
 
-                    const [wsPkg] = fg.sync(['package.json'], {
+                    const [ws_pkg_path] = fg.sync(['package.json'], {
                         cwd: ws_cwd,
                         onlyFiles: true,
                         absolute: true,
                         dot: false,
                     })
 
-                    core.info(`ws pkg: ${wsPkg}`)
+                    core.info(`ws pkg path: ${ws_pkg_path}`)
 
-                    const ws_pkg = JSON.parse(shell.cat(wsPkg))
+                    const ws_pkg = JSON.parse(shell.cat(ws_pkg_path))
 
                     core.startGroup('Loaded WS package')
-                    core.info(`path: ${wsPkg}`)
+                    core.info(`path: ${ws_pkg_path}`)
                     core.info(JSON.stringify(ws_pkg, undefined, 2))
                     core.endGroup()
 
                     try {
                         await deployRepo({
                             ...opts,
-                            cwd: ws_cwd,
                             repo: ws_cwd,
                             base: path.basename(ws_cwd),
                             pkg: ws_pkg,
@@ -187,7 +191,7 @@ async function deployRepo(opts) {
     const artifact_repo_url = `https://github.com/${ghRoot}/${repo_name}.git`
     core.info(`artifact repo url: ${artifact_repo_url}`)
 
-    const artifact_repo_path = path.join('tmp', base)
+    const artifact_repo_path = path.resolve(process.cwd(), 'tmp', base)
     core.info(`build repo path: ${artifact_repo_path}`)
 
     const res_rm = shell.rm('-rf', artifact_repo_path)
@@ -254,18 +258,20 @@ async function deployRepo(opts) {
         core.debug(e.message)
     }
 
-    if (shell.test('-d', build_dir)) {
+    const repo_build_dir = path.join(repo, build_dir)
+
+    if (shell.test('-d', repo_build_dir)) {
         core.info('copy build artifacts')
         const res_cp_build = shell.cp(
             '-r',
-            path.join(build_dir, '*'),
+            `${repo_build_dir}/*`,
             artifact_repo_path
         )
         core.info(`cp build: ${res_cp_build.code}`)
 
         const res_cp_pkg = shell.cp(
-            path.join(repo, 'package.json'),
-            path.join(artifact_repo_path, 'package.json')
+            `${repo}/package.json`,
+            `${artifact_repo_path}/package.json`
         )
         core.info(`cp pkg: ${res_cp_pkg.code}`)
     } else {
@@ -280,7 +286,9 @@ async function deployRepo(opts) {
             )
 
         core.info(`find: ${res_find}`)
-        res_find.map(f => shell.cp('-rf', f, artifact_repo_path))
+        res_find.map(f =>
+            shell.cp('-r', path.join(repo, f), artifact_repo_path)
+        )
     }
 
     shell

@@ -5595,7 +5595,7 @@ async function main() {
     const gh_org = core.getInput('github-org')
     const gh_usr = core.getInput('github-user')
 
-    const pkg_path = path.join(cwd, 'package.json')
+    const pkg_path = __webpack_require__.ab + "deploy-build/" + cwd + '/package.json'
     const pkg = JSON.parse(shell.cat(pkg_path))
 
     const opts = {
@@ -5615,7 +5615,7 @@ async function main() {
 
     core.startGroup('Loaded package')
     core.info(`pkg ls: ${shell.ls(cwd)}`)
-    core.info(path.join(cwd, 'package.json'))
+    core.info(__webpack_require__.ab + "deploy-build/" + cwd + '/package.json')
     core.info(JSON.stringify(pkg, undefined, 2))
     core.endGroup()
 
@@ -5634,7 +5634,7 @@ async function main() {
             Promise.all(
                 ws.map(async w => {
                     core.info(`workspace: ${w}`)
-                    const ws_cwd = path.join(cwd, w)
+                    const ws_cwd = path.resolve(cwd, w)
 
                     const [wsPkg] = fg.sync(['package.json'], {
                         cwd: ws_cwd,
@@ -5667,7 +5667,7 @@ async function main() {
         } else {
             await deployRepo({
                 ...opts,
-                repo: cwd,
+                repo: path.resolve(cwd),
                 base: path.basename(cwd),
                 pkg,
             })
@@ -5744,7 +5744,7 @@ async function deployRepo(opts) {
     const artifact_repo_url = `https://github.com/${ghRoot}/${repo_name}.git`
     core.info(`artifact repo url: ${artifact_repo_url}`)
 
-    const artifact_repo_path = path.join('tmp', base)
+    const artifact_repo_path = path.resolve('tmp', base)
     core.info(`build repo path: ${artifact_repo_path}`)
 
     const res_rm = shell.rm('-rf', artifact_repo_path)
@@ -5811,7 +5811,7 @@ async function deployRepo(opts) {
         core.debug(e.message)
     }
 
-    const repo_build_dir = path.join(repo, build_dir)
+    const repo_build_dir = path.resolve(repo, build_dir)
 
     if (shell.test('-d', build_dir)) {
         core.info('copy build artifacts')
@@ -5844,7 +5844,7 @@ async function deployRepo(opts) {
 
     shell
         .echo(`${new Date()}\n${sha}\n${context.payload.head_commit.url}\n`)
-        .to(path.join(artifact_repo_path, 'BUILD_INFO'))
+        .to(path.resolve(artifact_repo_path, 'BUILD_INFO'))
 
     await git.add({
         ...config,

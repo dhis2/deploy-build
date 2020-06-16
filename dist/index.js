@@ -5820,9 +5820,12 @@ async function deployRepo(opts) {
 
     if (shell.test('-d', artifact_build_dir)) {
         core.info(`copy build artifacts: ${artifact_build_dir}`)
+
+        const res_find_build = shell.ls(artifact_build_dir)
+
         const res_cp_build = shell.cp(
             '-r',
-            path.join(artifact_build_dir, '*'),
+            res_find_build,
             artifact_repo_path
         )
         core.info(`cp build: ${res_cp_build.code}`)
@@ -5831,6 +5834,7 @@ async function deployRepo(opts) {
             path.join(repo, 'package.json'),
             path.join(artifact_repo_path, 'package.json')
         )
+
         core.info(`cp pkg: ${res_cp_pkg.code}`)
     } else {
         core.info(`root package deployment: ${repo}`)
@@ -5844,7 +5848,7 @@ async function deployRepo(opts) {
             )
 
         core.info(`find: ${res_find}`)
-        res_find.map(f => shell.cp('-rf', f, artifact_repo_path))
+        shell.cp('-r', res_find, artifact_repo_path)
     }
 
     shell

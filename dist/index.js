@@ -5816,18 +5816,12 @@ async function deployRepo(opts) {
         core.debug(e.message)
     }
 
-    const artifact_build_dir = path.join(repo, build_dir)
+    const repo_build_dir = path.join(repo, build_dir)
 
-    if (shell.test('-d', artifact_build_dir)) {
-        core.info(`copy build artifacts: ${artifact_build_dir}`)
+    if (shell.test('-d', repo_build_dir)) {
+        core.info(`copy build artifacts: ${repo_build_dir}`)
 
-        const res_find_build = shell.ls(artifact_build_dir)
-
-        const res_cp_build = shell.cp(
-            '-r',
-            res_find_build,
-            artifact_repo_path
-        )
+        const res_cp_build = shell.cp('-r', repo_build_dir, artifact_repo_path)
         core.info(`cp build: ${res_cp_build.code}`)
 
         const res_cp_pkg = shell.cp(
@@ -5848,7 +5842,7 @@ async function deployRepo(opts) {
             )
 
         core.info(`find: ${res_find}`)
-        shell.cp('-r', res_find, artifact_repo_path)
+        shell.cp(res_find, artifact_repo_path)
     }
 
     shell

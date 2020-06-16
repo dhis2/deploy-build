@@ -5842,7 +5842,7 @@ async function deployRepo(opts) {
             )
 
         core.info(`find: ${res_find}`)
-        res_find.map(f => shell.cp('-r', f, artifact_repo_path))
+        res_find.map(f => shell.cp('-r', path.join(repo, f), artifact_repo_path))
     }
 
     shell

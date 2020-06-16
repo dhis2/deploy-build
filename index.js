@@ -21,6 +21,8 @@ require('shelljs/src/mkdir')
 require('shelljs/src/to')
 require('shelljs/src/head')
 
+shell.config.verbose = true
+
 try {
     const payload = JSON.stringify(github.context.payload, undefined, 2)
     core.debug(`The event payload: ${payload}`)
@@ -97,7 +99,6 @@ async function main() {
                     try {
                         await deployRepo({
                             ...opts,
-                            cwd: ws_cwd,
                             repo: ws_cwd,
                             base: path.basename(ws_cwd),
                             pkg: ws_pkg,
@@ -254,18 +255,20 @@ async function deployRepo(opts) {
         core.debug(e.message)
     }
 
+    const repo_build_dir = path.join(repo, build_dir)
+
     if (shell.test('-d', build_dir)) {
         core.info('copy build artifacts')
         const res_cp_build = shell.cp(
             '-r',
-            path.join(build_dir, '*'),
+            `${repo_build_dir}/*`,
             artifact_repo_path
         )
         core.info(`cp build: ${res_cp_build.code}`)
 
         const res_cp_pkg = shell.cp(
-            path.join(repo, 'package.json'),
-            path.join(artifact_repo_path, 'package.json')
+            `${repo}/package.json`,
+            `${artifact_repo_path}/package.json`
         )
         core.info(`cp pkg: ${res_cp_pkg.code}`)
     } else {
@@ -280,7 +283,7 @@ async function deployRepo(opts) {
             )
 
         core.info(`find: ${res_find}`)
-        res_find.map(f => shell.cp('-rf', f, artifact_repo_path))
+        res_find.map(f => shell.cp(f, artifact_repo_path))
     }
 
     shell

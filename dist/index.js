@@ -5589,8 +5589,13 @@ try {
 }
 
 async function main() {
+    core.startGroup('Runtime parameters:')
+    core.info(`CWD: ${process.cwd()}`)
+    core.info(`CWD ls: ${shell.ls(process.cwd())}`)
+    core.endGroup()
+
     const build_dir = core.getInput('build-dir')
-    const cwd = core.getInput('cwd')
+    const cwd = path.resolve(process.cwd(), core.getInput('cwd'))
     const gh_token = core.getInput('github-token')
     const gh_org = core.getInput('github-org')
     const gh_usr = core.getInput('github-user')
@@ -5603,19 +5608,16 @@ async function main() {
         gh_usr,
     }
 
-    core.startGroup('Runtime parameters:')
-    core.info(`CWD: ${process.cwd()}`)
-    core.info(`CWD ls: ${shell.ls(process.cwd())}`)
-    core.info('Options for run:')
+    core.startGroup('Options for run:')
     core.info(`${JSON.stringify(opts, undefined, 2)}`)
     core.endGroup()
 
-    const pkg_path = __webpack_require__.ab + "deploy-build/" + cwd + '/package.json'
+    const pkg_path = path.join(cwd, 'package.json')
     const pkg = JSON.parse(shell.cat(pkg_path))
 
     core.startGroup('Loaded package')
     core.info(`pkg ls: ${shell.ls(cwd)}`)
-    core.info(__webpack_require__.ab + "deploy-build/" + cwd + '/package.json')
+    core.info(`pkg path: ${pkg_path}`)
     core.info(JSON.stringify(pkg, undefined, 2))
     core.endGroup()
 
@@ -5634,21 +5636,22 @@ async function main() {
             Promise.all(
                 ws.map(async w => {
                     core.info(`workspace: ${w}`)
-                    const ws_cwd = path.resolve(cwd, w)
+                    const ws_cwd = path.join(cwd, w)
+                    core.info(`ws cwd: ${ws_cwd}`)
 
-                    const [wsPkg] = fg.sync(['package.json'], {
+                    const [ws_pkg_path] = fg.sync(['package.json'], {
                         cwd: ws_cwd,
                         onlyFiles: true,
                         absolute: true,
                         dot: false,
                     })
 
-                    core.info(`ws pkg: ${wsPkg}`)
+                    core.info(`ws pkg path: ${ws_pkg_path}`)
 
-                    const ws_pkg = JSON.parse(shell.cat(wsPkg))
+                    const ws_pkg = JSON.parse(shell.cat(ws_pkg_path))
 
                     core.startGroup('Loaded WS package')
-                    core.info(`path: ${wsPkg}`)
+                    core.info(`path: ${ws_pkg_path}`)
                     core.info(JSON.stringify(ws_pkg, undefined, 2))
                     core.endGroup()
 
@@ -5667,7 +5670,7 @@ async function main() {
         } else {
             await deployRepo({
                 ...opts,
-                repo: path.resolve(cwd),
+                repo: cwd,
                 base: path.basename(cwd),
                 pkg,
             })
@@ -5744,7 +5747,7 @@ async function deployRepo(opts) {
     const artifact_repo_url = `https://github.com/${ghRoot}/${repo_name}.git`
     core.info(`artifact repo url: ${artifact_repo_url}`)
 
-    const artifact_repo_path = path.resolve('tmp', base)
+    const artifact_repo_path = path.resolve(process.cwd(), 'tmp', base)
     core.info(`build repo path: ${artifact_repo_path}`)
 
     const res_rm = shell.rm('-rf', artifact_repo_path)
@@ -5811,7 +5814,7 @@ async function deployRepo(opts) {
         core.debug(e.message)
     }
 
-    const repo_build_dir = path.resolve(repo, build_dir)
+    const repo_build_dir = path.join(repo, build_dir)
 
     if (shell.test('-d', build_dir)) {
         core.info('copy build artifacts')
@@ -5839,12 +5842,12 @@ async function deployRepo(opts) {
             )
 
         core.info(`find: ${res_find}`)
-        res_find.map(f => shell.cp(f, artifact_repo_path))
+        res_find.map(f => shell.cp('-r', f, artifact_repo_path))
     }
 
     shell
         .echo(`${new Date()}\n${sha}\n${context.payload.head_commit.url}\n`)
-        .to(path.resolve(artifact_repo_path, 'BUILD_INFO'))
+        .to(path.join(artifact_repo_path, 'BUILD_INFO'))
 
     await git.add({
         ...config,

@@ -5595,9 +5595,6 @@ async function main() {
     const gh_org = core.getInput('github-org')
     const gh_usr = core.getInput('github-user')
 
-    const pkg_path = __webpack_require__.ab + "deploy-build/" + cwd + '/package.json'
-    const pkg = JSON.parse(shell.cat(pkg_path))
-
     const opts = {
         build_dir,
         cwd,
@@ -5612,6 +5609,9 @@ async function main() {
     core.info('Options for run:')
     core.info(`${JSON.stringify(opts, undefined, 2)}`)
     core.endGroup()
+
+    const pkg_path = __webpack_require__.ab + "deploy-build/" + cwd + '/package.json'
+    const pkg = JSON.parse(shell.cat(pkg_path))
 
     core.startGroup('Loaded package')
     core.info(`pkg ls: ${shell.ls(cwd)}`)

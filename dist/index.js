@@ -5598,7 +5598,6 @@ async function main() {
 
     const opts = {
         build_dir,
-        cwd,
         gh_token,
         gh_org,
         gh_usr,
@@ -5653,7 +5652,6 @@ async function main() {
                     try {
                         await deployRepo({
                             ...opts,
-                            cwd: ws_cwd,
                             repo: ws_cwd,
                             base: path.basename(ws_cwd),
                             pkg: ws_pkg,
@@ -5678,6 +5676,12 @@ async function main() {
 
 async function deployRepo(opts) {
     const { base, repo, gh_org, gh_usr, gh_token, build_dir, pkg } = opts
+
+    core.startGroup('Deploy repo options')
+    core.info(`base: ${base}`)
+    core.info(`repo: ${repo}`)
+    core.info(`build_dir: ${build_dir}`)
+    core.endGroup()
 
     const context = github.context
     const octokit = new github.GitHub(gh_token)
@@ -5810,11 +5814,12 @@ async function deployRepo(opts) {
         core.debug(e.message)
     }
 
-    if (shell.test('-d', build_dir)) {
-        core.info('copy build artifacts')
+    const artifact_build_dir = path.join(repo, build_dir)
+    if (shell.test('-d', artifact_build_dir)) {
+        core.info(`copy build artifacts: ${artifact_build_dir}`)
         const res_cp_build = shell.cp(
             '-r',
-            path.join(build_dir, '*'),
+            path.join(artifact_build_dir, '*'),
             artifact_repo_path
         )
         core.info(`cp build: ${res_cp_build.code}`)
@@ -5825,7 +5830,7 @@ async function deployRepo(opts) {
         )
         core.info(`cp pkg: ${res_cp_pkg.code}`)
     } else {
-        core.info('root package deployment')
+        core.info(`root package deployment: ${repo}`)
         const res_find = shell
             .ls(repo)
             .filter(

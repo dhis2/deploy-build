@@ -120,7 +120,7 @@ async function main() {
 
 async function deployRepo(opts) {
     const { base, repo, gh_org, gh_usr, gh_token, build_dir, pkg } = opts
-    
+
     core.startGroup('Deploy repo options')
     core.info(`base: ${base}`)
     core.info(`repo: ${repo}`)

@@ -262,9 +262,13 @@ async function deployRepo(opts) {
 
     if (shell.test('-d', repo_build_dir)) {
         core.info('copy build artifacts')
+        
+        const res_rm = shell.rm('-rf', artifact_repo_path)
+        core.info(`rm: ${res_rm.code}`)
+        
         const res_cp_build = shell.cp(
             '-r',
-            `${repo_build_dir}/*`,
+            repo_build_dir,
             artifact_repo_path
         )
         core.info(`cp build: ${res_cp_build.code}`)

@@ -64,7 +64,9 @@ async function gitListStagedStatuses({ fs, dir, filepath }) {
         ([filepath, headStatus, , stageStatus]) =>
             `${filepath}: ${gitStatusToString(headStatus, stageStatus)}`
     )
-    core.info(`git file statuses:\n${statuses.join('\n')}\n\n`)
+    core.startGroup('git file statuses')
+    statuses.forEach(core.info)
+    core.endGroup()
 }
 
 try {
@@ -378,7 +380,9 @@ async function deployRepo(opts) {
         onAuth: () => ({ username: gh_token }),
     })
 
-    core.info(`push:\n${JSON.stringify(res_push, undefined, 2)}`)
+    core.startGroup(`push results: ${res_push.ok ? 'OK' : 'ERROR'}`)
+    core.info(JSON.stringify(res_push, undefined, 2))
+    core.endGroup()
 }
 
 async function format_ref(ref, opts) {

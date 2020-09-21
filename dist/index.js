@@ -5855,11 +5855,30 @@ async function deployRepo(opts) {
         .echo(`${new Date()}\n${sha}\n${context.payload.head_commit.url}\n`)
         .to(path.join(artifact_repo_path, 'BUILD_INFO'))
 
+    await git.remove({
+        ...config,
+        dir: artifact_repo_path,
+        filepath: '.',
+    })
     await git.add({
         ...config,
         dir: artifact_repo_path,
         filepath: '.',
     })
+
+    const gitIndexFiles = await git.listFiles({
+        ...config,
+        dir: artifact_repo_path,
+        filepath: '.',
+    })
+    const statuses = await Promise.all(
+        gitIndexFiles.map(filepath =>
+            git
+                .status({ ...config, dir: artifact_repo_path, filepath })
+                .then(status => `${filepath}: ${status}`)
+        )
+    )
+    core.info(`git file statuses:\n${statuses.join('\n')}\n\n`)
 
     const short_msg = shell.echo(`${commit_msg}`).head({ '-n': 1 })
 
@@ -5885,7 +5904,7 @@ async function deployRepo(opts) {
         onAuth: () => ({ username: gh_token }),
     })
 
-    core.info(`push: ${res_push}`)
+    core.info(`push:\n${JSON.stringify(res_push, undefined, 2)}`)
 }
 
 async function format_ref(ref, opts) {

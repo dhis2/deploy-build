@@ -5616,11 +5616,10 @@ async function gitListStagedStatuses({ fs, dir, filepath }) {
             dir,
             filepaths: [filepath],
         })
+    ).map(
+        ([filepath, headStatus, , stageStatus]) =>
+            `${filepath}: ${gitStatusToString(headStatus, stageStatus)}`
     )
-        .map(
-            ([filepath, headStatus, , stageStatus]) =>
-                `${filepath}: ${gitStatusToString(headStatus, stageStatus)}`
-        )
     core.info(`git file statuses:\n${statuses.join('\n')}\n\n`)
 }
 

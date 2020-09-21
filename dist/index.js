@@ -5912,7 +5912,12 @@ async function deployRepo(opts) {
         filepath: '.',
     })
 
-    const short_msg = shell.echo(`${commit_msg}`).head({ '-n': 1 })
+    // const short_msg = shell.echo(`${commit_msg}`).head({ '-n': 1 })
+    const commit_line_length = commit_msg.indexOf('\n')
+    const short_msg = commit_msg.substring(
+        0,
+        commit_line_length === -1 ? commit_msg.length : commit_line_length
+    )
 
     const commit_sha = await git.commit({
         ...config,

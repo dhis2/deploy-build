@@ -95,8 +95,8 @@ function deployRepo {
 
     if [[ -d "$BUILD_DIR" ]]; then
         echo "Copy the build artifacts from ${BUILD_DIR}"
-        rm -rf $BUILD_REPO_DIR
-        cp -r $BUILD_DIR $BUILD_REPO_DIR
+        rm -rf $BUILD_REPO_DIR/*
+        cp -r $BUILD_DIR/* $BUILD_REPO_DIR/
 
         echo "Copy package.json to ${BUILD_REPO_DIR}"
         cp "${REPO_DIR}/package.json" "${BUILD_REPO_DIR}/package.json"

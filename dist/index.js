@@ -5579,6 +5579,34 @@ __webpack_require__(580)
 
 shell.config.verbose = true
 
+// Equivalent to "git add -A ."
+async function gitAddAllRecursive({ fs, dir }) {
+    const statusMatrix = await git.statusMatrix({ dir: dir, filepaths: ['.'] })
+    return await Promise.all(
+        statusMatrix.map(([filepath, , worktreeStatus]) =>
+            worktreeStatus
+                ? git.add({ fs, dir, filepath: filepath })
+                : git.remove({ fs, dir, filepath: filepath })
+        )
+    )
+}
+
+async function gitListStatuses({ fs, dir, filepath }) {
+    const gitIndexFiles = await git.listFiles({
+        fs,
+        dir,
+        filepath,
+    })
+    const statuses = await Promise.all(
+        gitIndexFiles.map(filepath =>
+            git
+                .status({ fs, dir, filepath })
+                .then(status => `${filepath}: ${status}`)
+        )
+    )
+    core.info(`git file statuses:\n${statuses.join('\n')}\n\n`)
+}
+
 try {
     const payload = JSON.stringify(github.context.payload, undefined, 2)
     core.debug(`The event payload: ${payload}`)
@@ -5816,11 +5844,11 @@ async function deployRepo(opts) {
 
     const repo_build_dir = path.join(repo, build_dir)
 
+    const res_rm_build = shell.rm('-rf', path.join(artifact_repo_path, '*'))
+    core.info(`rm build: ${res_rm_build.code}`)
+
     if (shell.test('-d', repo_build_dir)) {
         core.info('copy build artifacts')
-
-        const res_rm_build = shell.rm('-rf', path.join(artifact_repo_path, '*'))
-        core.info(`rm build: ${res_rm_build.code}`)
 
         const res_cp_build = shell.cp(
             '-r',
@@ -5855,30 +5883,16 @@ async function deployRepo(opts) {
         .echo(`${new Date()}\n${sha}\n${context.payload.head_commit.url}\n`)
         .to(path.join(artifact_repo_path, 'BUILD_INFO'))
 
-    await git.remove({
+    await gitAddAllRecursive({
         ...config,
         dir: artifact_repo_path,
-        filepath: '.',
-    })
-    await git.add({
-        ...config,
-        dir: artifact_repo_path,
-        filepath: '.',
     })
 
-    const gitIndexFiles = await git.listFiles({
+    await gitListStatuses({
         ...config,
         dir: artifact_repo_path,
         filepath: '.',
     })
-    const statuses = await Promise.all(
-        gitIndexFiles.map(filepath =>
-            git
-                .status({ ...config, dir: artifact_repo_path, filepath })
-                .then(status => `${filepath}: ${status}`)
-        )
-    )
-    core.info(`git file statuses:\n${statuses.join('\n')}\n\n`)
 
     const short_msg = shell.echo(`${commit_msg}`).head({ '-n': 1 })
 

@@ -5581,7 +5581,11 @@ shell.config.verbose = true
 
 // Equivalent to "git add -A ."
 async function gitAddAllRecursive({ fs, dir }) {
-    const statusMatrix = await git.statusMatrix({ dir: dir, filepaths: ['.'] })
+    const statusMatrix = await git.statusMatrix({
+        fs,
+        dir: dir,
+        filepaths: ['.'],
+    })
     return await Promise.all(
         statusMatrix.map(([filepath, , worktreeStatus]) =>
             worktreeStatus

@@ -5617,7 +5617,6 @@ async function gitListStagedStatuses({ fs, dir, filepath }) {
             filepaths: [filepath],
         })
     )
-        .filter(([, headStatus, , stageStatus]) => headStatus !== stageStatus)
         .map(
             ([filepath, headStatus, , stageStatus]) =>
                 `${filepath}: ${gitStatusToString(headStatus, stageStatus)}`

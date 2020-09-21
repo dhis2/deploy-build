@@ -356,17 +356,18 @@ async function deployRepo(opts) {
         filepath: '.',
     })
 
-    // const short_msg = shell.echo(`${commit_msg}`).head({ '-n': 1 })
     const commit_line_length = commit_msg.indexOf('\n')
     const short_msg = commit_msg.substring(
         0,
         commit_line_length === -1 ? commit_msg.length : commit_line_length
     )
 
+    const new_commit_msg = `${short_sha} ${short_msg}`
+    core.info(`committing with message: ${new_commit_msg}`)
     const commit_sha = await git.commit({
         ...config,
         dir: artifact_repo_path,
-        message: `${short_sha} ${short_msg}`,
+        message: new_commit_msg,
         author: {
             name: committer_name,
             email: committer_email,

@@ -5579,6 +5579,52 @@ __webpack_require__(580)
 
 shell.config.verbose = true
 
+// Equivalent to "git add -A ."
+async function gitAddAllRecursive({ fs, dir }) {
+    const statusMatrix = await git.statusMatrix({
+        fs,
+        dir: dir,
+        filepaths: ['.'],
+    })
+    return await Promise.all(
+        statusMatrix.map(([filepath, , worktreeStatus]) =>
+            worktreeStatus
+                ? git.add({ fs, dir, filepath: filepath })
+                : git.remove({ fs, dir, filepath: filepath })
+        )
+    )
+}
+
+const gitStatusToString = (headStatus, stageStatus) => {
+    switch (stageStatus - headStatus) {
+        case -1:
+            return 'DELETED'
+        case 0:
+            return 'UNMODIFIED'
+        case 1:
+            return 'MODIFIED'
+        case 2:
+            return 'ADDED'
+        default:
+            return 'UNKNOWN'
+    }
+}
+async function gitListStagedStatuses({ fs, dir, filepath }) {
+    const statuses = (
+        await git.statusMatrix({
+            fs,
+            dir,
+            filepaths: [filepath],
+        })
+    ).map(
+        ([filepath, headStatus, , stageStatus]) =>
+            `${filepath}: ${gitStatusToString(headStatus, stageStatus)}`
+    )
+    core.startGroup('git file statuses')
+    statuses.forEach(core.info)
+    core.endGroup()
+}
+
 try {
     const payload = JSON.stringify(github.context.payload, undefined, 2)
     core.debug(`The event payload: ${payload}`)
@@ -5816,11 +5862,11 @@ async function deployRepo(opts) {
 
     const repo_build_dir = path.join(repo, build_dir)
 
+    const res_rm_build = shell.rm('-rf', path.join(artifact_repo_path, '*'))
+    core.info(`rm build: ${res_rm_build.code}`)
+
     if (shell.test('-d', repo_build_dir)) {
         core.info('copy build artifacts')
-
-        const res_rm_build = shell.rm('-rf', path.join(artifact_repo_path, '*'))
-        core.info(`rm build: ${res_rm_build.code}`)
 
         const res_cp_build = shell.cp(
             '-r',
@@ -5855,37 +5901,29 @@ async function deployRepo(opts) {
         .echo(`${new Date()}\n${sha}\n${context.payload.head_commit.url}\n`)
         .to(path.join(artifact_repo_path, 'BUILD_INFO'))
 
-    await git.remove({
+    await gitAddAllRecursive({
         ...config,
         dir: artifact_repo_path,
-        filepath: '.',
     })
-    await git.add({
+
+    await gitListStagedStatuses({
         ...config,
         dir: artifact_repo_path,
         filepath: '.',
     })
 
-    const gitIndexFiles = await git.listFiles({
-        ...config,
-        dir: artifact_repo_path,
-        filepath: '.',
-    })
-    const statuses = await Promise.all(
-        gitIndexFiles.map(filepath =>
-            git
-                .status({ ...config, dir: artifact_repo_path, filepath })
-                .then(status => `${filepath}: ${status}`)
-        )
+    const commit_line_length = commit_msg.indexOf('\n')
+    const short_msg = commit_msg.substring(
+        0,
+        commit_line_length === -1 ? commit_msg.length : commit_line_length
     )
-    core.info(`git file statuses:\n${statuses.join('\n')}\n\n`)
 
-    const short_msg = shell.echo(`${commit_msg}`).head({ '-n': 1 })
-
+    const new_commit_msg = `${short_sha} ${short_msg}`
+    core.info(`committing with message: ${new_commit_msg}`)
     const commit_sha = await git.commit({
         ...config,
         dir: artifact_repo_path,
-        message: `${short_sha} ${short_msg}`,
+        message: new_commit_msg,
         author: {
             name: committer_name,
             email: committer_email,
@@ -5904,7 +5942,9 @@ async function deployRepo(opts) {
         onAuth: () => ({ username: gh_token }),
     })
 
-    core.info(`push:\n${JSON.stringify(res_push, undefined, 2)}`)
+    core.startGroup(`push results: ${res_push.ok ? 'OK' : 'ERROR'}`)
+    core.info(JSON.stringify(res_push, undefined, 2))
+    core.endGroup()
 }
 
 async function format_ref(ref, opts) {

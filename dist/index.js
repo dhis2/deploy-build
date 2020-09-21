@@ -5595,19 +5595,32 @@ async function gitAddAllRecursive({ fs, dir }) {
     )
 }
 
-async function gitListStatuses({ fs, dir, filepath }) {
-    const gitIndexFiles = await git.listFiles({
-        fs,
-        dir,
-        filepath,
-    })
-    const statuses = await Promise.all(
-        gitIndexFiles.map(filepath =>
-            git
-                .status({ fs, dir, filepath })
-                .then(status => `${filepath}: ${status}`)
+const gitStatusToString = (headStatus, stageStatus) => {
+    switch (stageStatus - headStatus) {
+        case -1:
+            return 'DELETED'
+        case 0:
+            return 'UNMODIFIED'
+        case 1:
+            return 'MODIFIED'
+        case 2:
+            return 'ADDED'
+        default:
+            return 'UNKNOWN'
+    }
+}
+async function gitListStagedStatuses({ fs, dir, filepath }) {
+    const statuses = await git
+        .statusMatrix({
+            fs,
+            dir,
+            filepaths: [filepath],
+        })
+        .filter(([, headStatus, , stageStatus]) => headStatus !== stageStatus)
+        .map(
+            ([filepath, headStatus, , stageStatus]) =>
+                `${filepath}: ${gitStatusToString(headStatus, stageStatus)}`
         )
-    )
     core.info(`git file statuses:\n${statuses.join('\n')}\n\n`)
 }
 
@@ -5892,7 +5905,7 @@ async function deployRepo(opts) {
         dir: artifact_repo_path,
     })
 
-    await gitListStatuses({
+    await gitListStagedStatuses({
         ...config,
         dir: artifact_repo_path,
         filepath: '.',

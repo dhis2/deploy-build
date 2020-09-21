@@ -54,12 +54,13 @@ const gitStatusToString = (headStatus, stageStatus) => {
     }
 }
 async function gitListStagedStatuses({ fs, dir, filepath }) {
-    const statuses = await git
-        .statusMatrix({
+    const statuses = (
+        await git.statusMatrix({
             fs,
             dir,
             filepaths: [filepath],
         })
+    )
         .filter(([, headStatus, , stageStatus]) => headStatus !== stageStatus)
         .map(
             ([filepath, headStatus, , stageStatus]) =>

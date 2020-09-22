@@ -5818,7 +5818,9 @@ async function deployRepo(opts) {
         http,
         url: artifact_repo_url,
     })
-    core.info(`remote info: ${remote_info}`)
+    core.startGroup('remote info')
+    core.info(JSON.stringify(remote_info, undefined, 2))
+    core.endGroup()
 
     try {
         const res_fetch = await git.fetch({
@@ -5828,10 +5830,14 @@ async function deployRepo(opts) {
             dir: artifact_repo_path,
             depth: 1,
             ref: short_ref,
+            singleBranch: true,
+            tags: false,
             remote: 'artifact',
         })
 
-        core.info(`remote fetch ${res_fetch}`)
+        core.startGroup('remote fetch')
+        core.info(JSON.stringify(res_fetch, undefined, 2))
+        core.endGroup()
 
         await git.checkout({
             ...config,

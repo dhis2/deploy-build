@@ -5730,7 +5730,16 @@ async function main() {
 }
 
 async function deployRepo(opts) {
-    const { base, repo, gh_org, gh_usr, gh_token, build_dir, pkg, build_repo } = opts
+    const {
+        base,
+        repo,
+        gh_org,
+        gh_usr,
+        gh_token,
+        build_dir,
+        pkg,
+        build_repo,
+    } = opts
 
     const context = github.context
     const octokit = new github.GitHub(gh_token)
@@ -5768,7 +5777,7 @@ async function deployRepo(opts) {
     const ghRoot = gh_usr ? gh_usr : gh_org
 
     // drop the scope from e.g. @dhis2/foobar to foobar
-    const strip = (name) => path.basename(name)
+    const strip = name => path.basename(name)
 
     const repo_name = strip(build_repo ? build_repo : pkg.name)
 

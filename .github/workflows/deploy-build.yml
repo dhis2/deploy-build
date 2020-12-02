@@ -52,7 +52,7 @@ jobs:
               with:
                   github-token: ${{ env.GH_TOKEN }}
                   cwd: ./examples/repo
-                  repo-name: single-pkg-custom-name
+                  repo-name: deploy-build-test-repo-custom-name
 
     multiple-pkg:
         runs-on: ubuntu-latest

@@ -39,6 +39,21 @@ jobs:
                   github-token: ${{ env.GH_TOKEN }}
                   cwd: ./examples/repo-build
 
+    single-pkg-custom-name:
+        runs-on: ubuntu-latest
+        if: "!contains(github.event.head_commit.message, '[skip ci]')"
+        steps:
+            - uses: actions/checkout@v2
+            - uses: actions/setup-node@v1
+              with:
+                  node-version: 12.x
+
+            - uses: ./
+              with:
+                  github-token: ${{ env.GH_TOKEN }}
+                  cwd: ./examples/repo
+                  repo-name: single-pkg-custom-name
+
     multiple-pkg:
         runs-on: ubuntu-latest
         if: "!contains(github.event.head_commit.message, '[skip ci]')"
@@ -55,6 +70,7 @@ jobs:
               with:
                   github-token: ${{ env.GH_TOKEN }}
                   cwd: ./examples/monorepo
+                  repo-name: no-effect
 
     multiple-pkg-build:
         runs-on: ubuntu-latest

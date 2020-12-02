@@ -89,6 +89,7 @@ async function main() {
     const gh_token = core.getInput('github-token')
     const gh_org = core.getInput('github-org')
     const gh_usr = core.getInput('github-user')
+    const build_repo = core.getInput('repo-name')
 
     const opts = {
         build_dir,
@@ -96,6 +97,7 @@ async function main() {
         gh_token,
         gh_org,
         gh_usr,
+        build_repo,
     }
 
     core.startGroup('Options for run:')
@@ -151,6 +153,7 @@ async function main() {
                             repo: ws_cwd,
                             base: path.basename(ws_cwd),
                             pkg: ws_pkg,
+                            monorepo: true,
                         })
                     } catch (e) {
                         core.setFailed(e.message)
@@ -171,7 +174,7 @@ async function main() {
 }
 
 async function deployRepo(opts) {
-    const { base, repo, gh_org, gh_usr, gh_token, build_dir, pkg } = opts
+    const { base, repo, gh_org, gh_usr, gh_token, build_dir, pkg, build_repo, monorepo } = opts
 
     const context = github.context
     const octokit = new github.GitHub(gh_token)
@@ -209,7 +212,11 @@ async function deployRepo(opts) {
     const ghRoot = gh_usr ? gh_usr : gh_org
 
     // drop the scope from e.g. @dhis2/foobar to foobar
-    const repo_name = path.basename(pkg.name)
+    const strip = (name) => path.basename(name)
+
+    // monorepos default to package name
+    const repo_name = strip(monorepo ? pkg.name : build_repo)
+
     core.info(`build repo name: ${repo_name}`)
 
     try {

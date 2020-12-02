@@ -19,6 +19,9 @@ inputs:
         description: 'Overrides the build directory to use as artifact to deploy.'
         required: false
         default: 'build'
+    repo-name:
+        description: 'Overrides the build repo name, the default is to use the package name. No effect in monorepos.'
+        required: false
 runs:
     using: 'node12'
     main: 'dist/index.js'

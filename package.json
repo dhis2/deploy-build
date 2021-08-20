@@ -24,7 +24,7 @@
     },
     "homepage": "https://github.com/dhis2/deploy-build#readme",
     "dependencies": {
-        "@actions/core": "^1.2.3",
+        "@actions/core": "^1.5.0",
         "@actions/github": "^2.1.1",
         "@octokit/rest": "^17.1.4",
         "isomorphic-git": "^1.3.1",

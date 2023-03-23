@@ -3,7 +3,7 @@ name: 'deploy-build test (node)'
 on: push
 
 env:
-    GH_TOKEN: ${{secrets.GH_TOKEN}}
+    GH_TOKEN: ${{secrets.DHIS2_BOT_GITHUB_TOKEN}}
 
 jobs:
     single-pkg:

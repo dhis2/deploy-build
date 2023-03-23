@@ -19,7 +19,13 @@ module.exports =
 /******/ 		};
 /******/
 /******/ 		// Execute the module function
-/******/ 		modules[moduleId].call(module.exports, module, module.exports, __webpack_require__);
+/******/ 		var threw = true;
+/******/ 		try {
+/******/ 			modules[moduleId].call(module.exports, module, module.exports, __webpack_require__);
+/******/ 			threw = false;
+/******/ 		} finally {
+/******/ 			if(threw) delete installedModules[moduleId];
+/******/ 		}
 /******/
 /******/ 		// Flag the module as loaded
 /******/ 		module.l = true;
@@ -292,7 +298,72 @@ function wrappy (fn, cb) {
 /* 12 */,
 /* 13 */,
 /* 14 */,
-/* 15 */,
+/* 15 */
+/***/ (function(module) {
+
+"use strict";
+
+
+const isWin = process.platform === 'win32';
+
+function notFoundError(original, syscall) {
+    return Object.assign(new Error(`${syscall} ${original.command} ENOENT`), {
+        code: 'ENOENT',
+        errno: 'ENOENT',
+        syscall: `${syscall} ${original.command}`,
+        path: original.command,
+        spawnargs: original.args,
+    });
+}
+
+function hookChildProcess(cp, parsed) {
+    if (!isWin) {
+        return;
+    }
+
+    const originalEmit = cp.emit;
+
+    cp.emit = function (name, arg1) {
+        // If emitting "exit" event and exit code is 1, we need to check if
+        // the command exists and emit an "error" instead
+        // See https://github.com/IndigoUnited/node-cross-spawn/issues/16
+        if (name === 'exit') {
+            const err = verifyENOENT(arg1, parsed, 'spawn');
+
+            if (err) {
+                return originalEmit.call(cp, 'error', err);
+            }
+        }
+
+        return originalEmit.apply(cp, arguments); // eslint-disable-line prefer-rest-params
+    };
+}
+
+function verifyENOENT(status, parsed) {
+    if (isWin && status === 1 && !parsed.file) {
+        return notFoundError(parsed.original, 'spawn');
+    }
+
+    return null;
+}
+
+function verifyENOENTSync(status, parsed) {
+    if (isWin && status === 1 && !parsed.file) {
+        return notFoundError(parsed.original, 'spawnSync');
+    }
+
+    return null;
+}
+
+module.exports = {
+    hookChildProcess,
+    verifyENOENT,
+    verifyENOENTSync,
+    notFoundError,
+};
+
+
+/***/ }),
 /* 16 */
 /***/ (function(module) {
 
@@ -308,52 +379,7 @@ module.exports = eval("require")("encoding");
 
 /***/ }),
 /* 19 */,
-/* 20 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-"use strict";
-
-
-const cp = __webpack_require__(129);
-const parse = __webpack_require__(568);
-const enoent = __webpack_require__(881);
-
-function spawn(command, args, options) {
-    // Parse the arguments
-    const parsed = parse(command, args, options);
-
-    // Spawn the child process
-    const spawned = cp.spawn(parsed.command, parsed.args, parsed.options);
-
-    // Hook into child process "exit" event to emit an error if the command
-    // does not exists, see: https://github.com/IndigoUnited/node-cross-spawn/issues/16
-    enoent.hookChildProcess(spawned, parsed);
-
-    return spawned;
-}
-
-function spawnSync(command, args, options) {
-    // Parse the arguments
-    const parsed = parse(command, args, options);
-
-    // Spawn the child process
-    const result = cp.spawnSync(parsed.command, parsed.args, parsed.options);
-
-    // Analyze if the command does not exist, see: https://github.com/IndigoUnited/node-cross-spawn/issues/16
-    result.error = result.error || enoent.verifyENOENTSync(result.status, parsed);
-
-    return result;
-}
-
-module.exports = spawn;
-module.exports.spawn = spawn;
-module.exports.sync = spawnSync;
-
-module.exports._parse = parse;
-module.exports._enoent = enoent;
-
-
-/***/ }),
+/* 20 */,
 /* 21 */,
 /* 22 */,
 /* 23 */,
@@ -650,1231 +676,27 @@ function propagateCloseEventToSources(streams) {
 
 /***/ }),
 /* 43 */
-/***/ (function(__unusedmodule, exports, __webpack_require__) {
+/***/ (function(__unusedmodule, exports) {
 
 "use strict";
 
-
-// (C) 1995-2013 Jean-loup Gailly and Mark Adler
-// (C) 2014-2017 Vitaly Puzrin and Andrey Tupitsin
-//
-// This software is provided 'as-is', without any express or implied
-// warranty. In no event will the authors be held liable for any damages
-// arising from the use of this software.
-//
-// Permission is granted to anyone to use this software for any purpose,
-// including commercial applications, and to alter it and redistribute it
-// freely, subject to the following restrictions:
-//
-// 1. The origin of this software must not be misrepresented; you must not
-//   claim that you wrote the original software. If you use this software
-//   in a product, an acknowledgment in the product documentation would be
-//   appreciated but is not required.
-// 2. Altered source versions must be plainly marked as such, and must not be
-//   misrepresented as being the original software.
-// 3. This notice may not be removed or altered from any source distribution.
-
-/* eslint-disable space-unary-ops */
-
-var utils = __webpack_require__(999);
-
-/* Public constants ==========================================================*/
-/* ===========================================================================*/
-
-
-//var Z_FILTERED          = 1;
-//var Z_HUFFMAN_ONLY      = 2;
-//var Z_RLE               = 3;
-var Z_FIXED               = 4;
-//var Z_DEFAULT_STRATEGY  = 0;
-
-/* Possible values of the data_type field (though see inflate()) */
-var Z_BINARY              = 0;
-var Z_TEXT                = 1;
-//var Z_ASCII             = 1; // = Z_TEXT
-var Z_UNKNOWN             = 2;
-
-/*============================================================================*/
-
-
-function zero(buf) { var len = buf.length; while (--len >= 0) { buf[len] = 0; } }
-
-// From zutil.h
-
-var STORED_BLOCK = 0;
-var STATIC_TREES = 1;
-var DYN_TREES    = 2;
-/* The three kinds of block type */
-
-var MIN_MATCH    = 3;
-var MAX_MATCH    = 258;
-/* The minimum and maximum match lengths */
-
-// From deflate.h
-/* ===========================================================================
- * Internal compression state.
- */
-
-var LENGTH_CODES  = 29;
-/* number of length codes, not counting the special END_BLOCK code */
-
-var LITERALS      = 256;
-/* number of literal bytes 0..255 */
-
-var L_CODES       = LITERALS + 1 + LENGTH_CODES;
-/* number of Literal or Length codes, including the END_BLOCK code */
-
-var D_CODES       = 30;
-/* number of distance codes */
-
-var BL_CODES      = 19;
-/* number of codes used to transfer the bit lengths */
-
-var HEAP_SIZE     = 2 * L_CODES + 1;
-/* maximum heap size */
-
-var MAX_BITS      = 15;
-/* All codes must not exceed MAX_BITS bits */
-
-var Buf_size      = 16;
-/* size of bit buffer in bi_buf */
-
-
-/* ===========================================================================
- * Constants
- */
-
-var MAX_BL_BITS = 7;
-/* Bit length codes must not exceed MAX_BL_BITS bits */
-
-var END_BLOCK   = 256;
-/* end of block literal code */
-
-var REP_3_6     = 16;
-/* repeat previous bit length 3-6 times (2 bits of repeat count) */
-
-var REPZ_3_10   = 17;
-/* repeat a zero length 3-10 times  (3 bits of repeat count) */
-
-var REPZ_11_138 = 18;
-/* repeat a zero length 11-138 times  (7 bits of repeat count) */
-
-/* eslint-disable comma-spacing,array-bracket-spacing */
-var extra_lbits =   /* extra bits for each length code */
-  [0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0];
-
-var extra_dbits =   /* extra bits for each distance code */
-  [0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13];
-
-var extra_blbits =  /* extra bits for each bit length code */
-  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,3,7];
-
-var bl_order =
-  [16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15];
-/* eslint-enable comma-spacing,array-bracket-spacing */
-
-/* The lengths of the bit length codes are sent in order of decreasing
- * probability, to avoid transmitting the lengths for unused bit length codes.
- */
-
-/* ===========================================================================
- * Local data. These are initialized only once.
- */
-
-// We pre-fill arrays with 0 to avoid uninitialized gaps
-
-var DIST_CODE_LEN = 512; /* see definition of array dist_code below */
-
-// !!!! Use flat array instead of structure, Freq = i*2, Len = i*2+1
-var static_ltree  = new Array((L_CODES + 2) * 2);
-zero(static_ltree);
-/* The static literal tree. Since the bit lengths are imposed, there is no
- * need for the L_CODES extra codes used during heap construction. However
- * The codes 286 and 287 are needed to build a canonical tree (see _tr_init
- * below).
- */
-
-var static_dtree  = new Array(D_CODES * 2);
-zero(static_dtree);
-/* The static distance tree. (Actually a trivial tree since all codes use
- * 5 bits.)
- */
-
-var _dist_code    = new Array(DIST_CODE_LEN);
-zero(_dist_code);
-/* Distance codes. The first 256 values correspond to the distances
- * 3 .. 258, the last 256 values correspond to the top 8 bits of
- * the 15 bit distances.
- */
-
-var _length_code  = new Array(MAX_MATCH - MIN_MATCH + 1);
-zero(_length_code);
-/* length code for each normalized match length (0 == MIN_MATCH) */
-
-var base_length   = new Array(LENGTH_CODES);
-zero(base_length);
-/* First normalized length for each code (0 = MIN_MATCH) */
-
-var base_dist     = new Array(D_CODES);
-zero(base_dist);
-/* First normalized distance for each code (0 = distance of 1) */
-
-
-function StaticTreeDesc(static_tree, extra_bits, extra_base, elems, max_length) {
-
-  this.static_tree  = static_tree;  /* static tree or NULL */
-  this.extra_bits   = extra_bits;   /* extra bits for each code or NULL */
-  this.extra_base   = extra_base;   /* base index for extra_bits */
-  this.elems        = elems;        /* max number of elements in the tree */
-  this.max_length   = max_length;   /* max bit length for the codes */
-
-  // show if `static_tree` has data or dummy - needed for monomorphic objects
-  this.has_stree    = static_tree && static_tree.length;
-}
-
-
-var static_l_desc;
-var static_d_desc;
-var static_bl_desc;
-
-
-function TreeDesc(dyn_tree, stat_desc) {
-  this.dyn_tree = dyn_tree;     /* the dynamic tree */
-  this.max_code = 0;            /* largest code with non zero frequency */
-  this.stat_desc = stat_desc;   /* the corresponding static tree */
-}
-
-
-
-function d_code(dist) {
-  return dist < 256 ? _dist_code[dist] : _dist_code[256 + (dist >>> 7)];
-}
-
-
-/* ===========================================================================
- * Output a short LSB first on the stream.
- * IN assertion: there is enough room in pendingBuf.
- */
-function put_short(s, w) {
-//    put_byte(s, (uch)((w) & 0xff));
-//    put_byte(s, (uch)((ush)(w) >> 8));
-  s.pending_buf[s.pending++] = (w) & 0xff;
-  s.pending_buf[s.pending++] = (w >>> 8) & 0xff;
-}
-
-
-/* ===========================================================================
- * Send a value on a given number of bits.
- * IN assertion: length <= 16 and value fits in length bits.
- */
-function send_bits(s, value, length) {
-  if (s.bi_valid > (Buf_size - length)) {
-    s.bi_buf |= (value << s.bi_valid) & 0xffff;
-    put_short(s, s.bi_buf);
-    s.bi_buf = value >> (Buf_size - s.bi_valid);
-    s.bi_valid += length - Buf_size;
-  } else {
-    s.bi_buf |= (value << s.bi_valid) & 0xffff;
-    s.bi_valid += length;
-  }
-}
-
-
-function send_code(s, c, tree) {
-  send_bits(s, tree[c * 2]/*.Code*/, tree[c * 2 + 1]/*.Len*/);
-}
-
-
-/* ===========================================================================
- * Reverse the first len bits of a code, using straightforward code (a faster
- * method would use a table)
- * IN assertion: 1 <= len <= 15
- */
-function bi_reverse(code, len) {
-  var res = 0;
-  do {
-    res |= code & 1;
-    code >>>= 1;
-    res <<= 1;
-  } while (--len > 0);
-  return res >>> 1;
-}
-
-
-/* ===========================================================================
- * Flush the bit buffer, keeping at most 7 bits in it.
- */
-function bi_flush(s) {
-  if (s.bi_valid === 16) {
-    put_short(s, s.bi_buf);
-    s.bi_buf = 0;
-    s.bi_valid = 0;
-
-  } else if (s.bi_valid >= 8) {
-    s.pending_buf[s.pending++] = s.bi_buf & 0xff;
-    s.bi_buf >>= 8;
-    s.bi_valid -= 8;
-  }
-}
-
-
-/* ===========================================================================
- * Compute the optimal bit lengths for a tree and update the total bit length
- * for the current block.
- * IN assertion: the fields freq and dad are set, heap[heap_max] and
- *    above are the tree nodes sorted by increasing frequency.
- * OUT assertions: the field len is set to the optimal bit length, the
- *     array bl_count contains the frequencies for each bit length.
- *     The length opt_len is updated; static_len is also updated if stree is
- *     not null.
- */
-function gen_bitlen(s, desc)
-//    deflate_state *s;
-//    tree_desc *desc;    /* the tree descriptor */
-{
-  var tree            = desc.dyn_tree;
-  var max_code        = desc.max_code;
-  var stree           = desc.stat_desc.static_tree;
-  var has_stree       = desc.stat_desc.has_stree;
-  var extra           = desc.stat_desc.extra_bits;
-  var base            = desc.stat_desc.extra_base;
-  var max_length      = desc.stat_desc.max_length;
-  var h;              /* heap index */
-  var n, m;           /* iterate over the tree elements */
-  var bits;           /* bit length */
-  var xbits;          /* extra bits */
-  var f;              /* frequency */
-  var overflow = 0;   /* number of elements with bit length too large */
-
-  for (bits = 0; bits <= MAX_BITS; bits++) {
-    s.bl_count[bits] = 0;
-  }
-
-  /* In a first pass, compute the optimal bit lengths (which may
-   * overflow in the case of the bit length tree).
-   */
-  tree[s.heap[s.heap_max] * 2 + 1]/*.Len*/ = 0; /* root of the heap */
-
-  for (h = s.heap_max + 1; h < HEAP_SIZE; h++) {
-    n = s.heap[h];
-    bits = tree[tree[n * 2 + 1]/*.Dad*/ * 2 + 1]/*.Len*/ + 1;
-    if (bits > max_length) {
-      bits = max_length;
-      overflow++;
+Object.defineProperty(exports, "__esModule", { value: true });
+class DirentFromStats {
+    constructor(name, stats) {
+        this.name = name;
+        this.isBlockDevice = stats.isBlockDevice.bind(stats);
+        this.isCharacterDevice = stats.isCharacterDevice.bind(stats);
+        this.isDirectory = stats.isDirectory.bind(stats);
+        this.isFIFO = stats.isFIFO.bind(stats);
+        this.isFile = stats.isFile.bind(stats);
+        this.isSocket = stats.isSocket.bind(stats);
+        this.isSymbolicLink = stats.isSymbolicLink.bind(stats);
     }
-    tree[n * 2 + 1]/*.Len*/ = bits;
-    /* We overwrite tree[n].Dad which is no longer needed */
-
-    if (n > max_code) { continue; } /* not a leaf node */
-
-    s.bl_count[bits]++;
-    xbits = 0;
-    if (n >= base) {
-      xbits = extra[n - base];
-    }
-    f = tree[n * 2]/*.Freq*/;
-    s.opt_len += f * (bits + xbits);
-    if (has_stree) {
-      s.static_len += f * (stree[n * 2 + 1]/*.Len*/ + xbits);
-    }
-  }
-  if (overflow === 0) { return; }
-
-  // Trace((stderr,"\nbit length overflow\n"));
-  /* This happens for example on obj2 and pic of the Calgary corpus */
-
-  /* Find the first bit length which could increase: */
-  do {
-    bits = max_length - 1;
-    while (s.bl_count[bits] === 0) { bits--; }
-    s.bl_count[bits]--;      /* move one leaf down the tree */
-    s.bl_count[bits + 1] += 2; /* move one overflow item as its brother */
-    s.bl_count[max_length]--;
-    /* The brother of the overflow item also moves one step up,
-     * but this does not affect bl_count[max_length]
-     */
-    overflow -= 2;
-  } while (overflow > 0);
-
-  /* Now recompute all bit lengths, scanning in increasing frequency.
-   * h is still equal to HEAP_SIZE. (It is simpler to reconstruct all
-   * lengths instead of fixing only the wrong ones. This idea is taken
-   * from 'ar' written by Haruhiko Okumura.)
-   */
-  for (bits = max_length; bits !== 0; bits--) {
-    n = s.bl_count[bits];
-    while (n !== 0) {
-      m = s.heap[--h];
-      if (m > max_code) { continue; }
-      if (tree[m * 2 + 1]/*.Len*/ !== bits) {
-        // Trace((stderr,"code %d bits %d->%d\n", m, tree[m].Len, bits));
-        s.opt_len += (bits - tree[m * 2 + 1]/*.Len*/) * tree[m * 2]/*.Freq*/;
-        tree[m * 2 + 1]/*.Len*/ = bits;
-      }
-      n--;
-    }
-  }
 }
-
-
-/* ===========================================================================
- * Generate the codes for a given tree and bit counts (which need not be
- * optimal).
- * IN assertion: the array bl_count contains the bit length statistics for
- * the given tree and the field len is set for all tree elements.
- * OUT assertion: the field code is set for all tree elements of non
- *     zero code length.
- */
-function gen_codes(tree, max_code, bl_count)
-//    ct_data *tree;             /* the tree to decorate */
-//    int max_code;              /* largest code with non zero frequency */
-//    ushf *bl_count;            /* number of codes at each bit length */
-{
-  var next_code = new Array(MAX_BITS + 1); /* next code value for each bit length */
-  var code = 0;              /* running code value */
-  var bits;                  /* bit index */
-  var n;                     /* code index */
-
-  /* The distribution counts are first used to generate the code values
-   * without bit reversal.
-   */
-  for (bits = 1; bits <= MAX_BITS; bits++) {
-    next_code[bits] = code = (code + bl_count[bits - 1]) << 1;
-  }
-  /* Check that the bit counts in bl_count are consistent. The last code
-   * must be all ones.
-   */
-  //Assert (code + bl_count[MAX_BITS]-1 == (1<<MAX_BITS)-1,
-  //        "inconsistent bit counts");
-  //Tracev((stderr,"\ngen_codes: max_code %d ", max_code));
-
-  for (n = 0;  n <= max_code; n++) {
-    var len = tree[n * 2 + 1]/*.Len*/;
-    if (len === 0) { continue; }
-    /* Now reverse the bits */
-    tree[n * 2]/*.Code*/ = bi_reverse(next_code[len]++, len);
-
-    //Tracecv(tree != static_ltree, (stderr,"\nn %3d %c l %2d c %4x (%x) ",
-    //     n, (isgraph(n) ? n : ' '), len, tree[n].Code, next_code[len]-1));
-  }
+function createDirentFromStats(name, stats) {
+    return new DirentFromStats(name, stats);
 }
-
-
-/* ===========================================================================
- * Initialize the various 'constant' tables.
- */
-function tr_static_init() {
-  var n;        /* iterates over tree elements */
-  var bits;     /* bit counter */
-  var length;   /* length value */
-  var code;     /* code value */
-  var dist;     /* distance index */
-  var bl_count = new Array(MAX_BITS + 1);
-  /* number of codes at each bit length for an optimal tree */
-
-  // do check in _tr_init()
-  //if (static_init_done) return;
-
-  /* For some embedded targets, global variables are not initialized: */
-/*#ifdef NO_INIT_GLOBAL_POINTERS
-  static_l_desc.static_tree = static_ltree;
-  static_l_desc.extra_bits = extra_lbits;
-  static_d_desc.static_tree = static_dtree;
-  static_d_desc.extra_bits = extra_dbits;
-  static_bl_desc.extra_bits = extra_blbits;
-#endif*/
-
-  /* Initialize the mapping length (0..255) -> length code (0..28) */
-  length = 0;
-  for (code = 0; code < LENGTH_CODES - 1; code++) {
-    base_length[code] = length;
-    for (n = 0; n < (1 << extra_lbits[code]); n++) {
-      _length_code[length++] = code;
-    }
-  }
-  //Assert (length == 256, "tr_static_init: length != 256");
-  /* Note that the length 255 (match length 258) can be represented
-   * in two different ways: code 284 + 5 bits or code 285, so we
-   * overwrite length_code[255] to use the best encoding:
-   */
-  _length_code[length - 1] = code;
-
-  /* Initialize the mapping dist (0..32K) -> dist code (0..29) */
-  dist = 0;
-  for (code = 0; code < 16; code++) {
-    base_dist[code] = dist;
-    for (n = 0; n < (1 << extra_dbits[code]); n++) {
-      _dist_code[dist++] = code;
-    }
-  }
-  //Assert (dist == 256, "tr_static_init: dist != 256");
-  dist >>= 7; /* from now on, all distances are divided by 128 */
-  for (; code < D_CODES; code++) {
-    base_dist[code] = dist << 7;
-    for (n = 0; n < (1 << (extra_dbits[code] - 7)); n++) {
-      _dist_code[256 + dist++] = code;
-    }
-  }
-  //Assert (dist == 256, "tr_static_init: 256+dist != 512");
-
-  /* Construct the codes of the static literal tree */
-  for (bits = 0; bits <= MAX_BITS; bits++) {
-    bl_count[bits] = 0;
-  }
-
-  n = 0;
-  while (n <= 143) {
-    static_ltree[n * 2 + 1]/*.Len*/ = 8;
-    n++;
-    bl_count[8]++;
-  }
-  while (n <= 255) {
-    static_ltree[n * 2 + 1]/*.Len*/ = 9;
-    n++;
-    bl_count[9]++;
-  }
-  while (n <= 279) {
-    static_ltree[n * 2 + 1]/*.Len*/ = 7;
-    n++;
-    bl_count[7]++;
-  }
-  while (n <= 287) {
-    static_ltree[n * 2 + 1]/*.Len*/ = 8;
-    n++;
-    bl_count[8]++;
-  }
-  /* Codes 286 and 287 do not exist, but we must include them in the
-   * tree construction to get a canonical Huffman tree (longest code
-   * all ones)
-   */
-  gen_codes(static_ltree, L_CODES + 1, bl_count);
-
-  /* The static distance tree is trivial: */
-  for (n = 0; n < D_CODES; n++) {
-    static_dtree[n * 2 + 1]/*.Len*/ = 5;
-    static_dtree[n * 2]/*.Code*/ = bi_reverse(n, 5);
-  }
-
-  // Now data ready and we can init static trees
-  static_l_desc = new StaticTreeDesc(static_ltree, extra_lbits, LITERALS + 1, L_CODES, MAX_BITS);
-  static_d_desc = new StaticTreeDesc(static_dtree, extra_dbits, 0,          D_CODES, MAX_BITS);
-  static_bl_desc = new StaticTreeDesc(new Array(0), extra_blbits, 0,         BL_CODES, MAX_BL_BITS);
-
-  //static_init_done = true;
-}
-
-
-/* ===========================================================================
- * Initialize a new block.
- */
-function init_block(s) {
-  var n; /* iterates over tree elements */
-
-  /* Initialize the trees. */
-  for (n = 0; n < L_CODES;  n++) { s.dyn_ltree[n * 2]/*.Freq*/ = 0; }
-  for (n = 0; n < D_CODES;  n++) { s.dyn_dtree[n * 2]/*.Freq*/ = 0; }
-  for (n = 0; n < BL_CODES; n++) { s.bl_tree[n * 2]/*.Freq*/ = 0; }
-
-  s.dyn_ltree[END_BLOCK * 2]/*.Freq*/ = 1;
-  s.opt_len = s.static_len = 0;
-  s.last_lit = s.matches = 0;
-}
-
-
-/* ===========================================================================
- * Flush the bit buffer and align the output on a byte boundary
- */
-function bi_windup(s)
-{
-  if (s.bi_valid > 8) {
-    put_short(s, s.bi_buf);
-  } else if (s.bi_valid > 0) {
-    //put_byte(s, (Byte)s->bi_buf);
-    s.pending_buf[s.pending++] = s.bi_buf;
-  }
-  s.bi_buf = 0;
-  s.bi_valid = 0;
-}
-
-/* ===========================================================================
- * Copy a stored block, storing first the length and its
- * one's complement if requested.
- */
-function copy_block(s, buf, len, header)
-//DeflateState *s;
-//charf    *buf;    /* the input data */
-//unsigned len;     /* its length */
-//int      header;  /* true if block header must be written */
-{
-  bi_windup(s);        /* align on byte boundary */
-
-  if (header) {
-    put_short(s, len);
-    put_short(s, ~len);
-  }
-//  while (len--) {
-//    put_byte(s, *buf++);
-//  }
-  utils.arraySet(s.pending_buf, s.window, buf, len, s.pending);
-  s.pending += len;
-}
-
-/* ===========================================================================
- * Compares to subtrees, using the tree depth as tie breaker when
- * the subtrees have equal frequency. This minimizes the worst case length.
- */
-function smaller(tree, n, m, depth) {
-  var _n2 = n * 2;
-  var _m2 = m * 2;
-  return (tree[_n2]/*.Freq*/ < tree[_m2]/*.Freq*/ ||
-         (tree[_n2]/*.Freq*/ === tree[_m2]/*.Freq*/ && depth[n] <= depth[m]));
-}
-
-/* ===========================================================================
- * Restore the heap property by moving down the tree starting at node k,
- * exchanging a node with the smallest of its two sons if necessary, stopping
- * when the heap property is re-established (each father smaller than its
- * two sons).
- */
-function pqdownheap(s, tree, k)
-//    deflate_state *s;
-//    ct_data *tree;  /* the tree to restore */
-//    int k;               /* node to move down */
-{
-  var v = s.heap[k];
-  var j = k << 1;  /* left son of k */
-  while (j <= s.heap_len) {
-    /* Set j to the smallest of the two sons: */
-    if (j < s.heap_len &&
-      smaller(tree, s.heap[j + 1], s.heap[j], s.depth)) {
-      j++;
-    }
-    /* Exit if v is smaller than both sons */
-    if (smaller(tree, v, s.heap[j], s.depth)) { break; }
-
-    /* Exchange v with the smallest son */
-    s.heap[k] = s.heap[j];
-    k = j;
-
-    /* And continue down the tree, setting j to the left son of k */
-    j <<= 1;
-  }
-  s.heap[k] = v;
-}
-
-
-// inlined manually
-// var SMALLEST = 1;
-
-/* ===========================================================================
- * Send the block data compressed using the given Huffman trees
- */
-function compress_block(s, ltree, dtree)
-//    deflate_state *s;
-//    const ct_data *ltree; /* literal tree */
-//    const ct_data *dtree; /* distance tree */
-{
-  var dist;           /* distance of matched string */
-  var lc;             /* match length or unmatched char (if dist == 0) */
-  var lx = 0;         /* running index in l_buf */
-  var code;           /* the code to send */
-  var extra;          /* number of extra bits to send */
-
-  if (s.last_lit !== 0) {
-    do {
-      dist = (s.pending_buf[s.d_buf + lx * 2] << 8) | (s.pending_buf[s.d_buf + lx * 2 + 1]);
-      lc = s.pending_buf[s.l_buf + lx];
-      lx++;
-
-      if (dist === 0) {
-        send_code(s, lc, ltree); /* send a literal byte */
-        //Tracecv(isgraph(lc), (stderr," '%c' ", lc));
-      } else {
-        /* Here, lc is the match length - MIN_MATCH */
-        code = _length_code[lc];
-        send_code(s, code + LITERALS + 1, ltree); /* send the length code */
-        extra = extra_lbits[code];
-        if (extra !== 0) {
-          lc -= base_length[code];
-          send_bits(s, lc, extra);       /* send the extra length bits */
-        }
-        dist--; /* dist is now the match distance - 1 */
-        code = d_code(dist);
-        //Assert (code < D_CODES, "bad d_code");
-
-        send_code(s, code, dtree);       /* send the distance code */
-        extra = extra_dbits[code];
-        if (extra !== 0) {
-          dist -= base_dist[code];
-          send_bits(s, dist, extra);   /* send the extra distance bits */
-        }
-      } /* literal or match pair ? */
-
-      /* Check that the overlay between pending_buf and d_buf+l_buf is ok: */
-      //Assert((uInt)(s->pending) < s->lit_bufsize + 2*lx,
-      //       "pendingBuf overflow");
-
-    } while (lx < s.last_lit);
-  }
-
-  send_code(s, END_BLOCK, ltree);
-}
-
-
-/* ===========================================================================
- * Construct one Huffman tree and assigns the code bit strings and lengths.
- * Update the total bit length for the current block.
- * IN assertion: the field freq is set for all tree elements.
- * OUT assertions: the fields len and code are set to the optimal bit length
- *     and corresponding code. The length opt_len is updated; static_len is
- *     also updated if stree is not null. The field max_code is set.
- */
-function build_tree(s, desc)
-//    deflate_state *s;
-//    tree_desc *desc; /* the tree descriptor */
-{
-  var tree     = desc.dyn_tree;
-  var stree    = desc.stat_desc.static_tree;
-  var has_stree = desc.stat_desc.has_stree;
-  var elems    = desc.stat_desc.elems;
-  var n, m;          /* iterate over heap elements */
-  var max_code = -1; /* largest code with non zero frequency */
-  var node;          /* new node being created */
-
-  /* Construct the initial heap, with least frequent element in
-   * heap[SMALLEST]. The sons of heap[n] are heap[2*n] and heap[2*n+1].
-   * heap[0] is not used.
-   */
-  s.heap_len = 0;
-  s.heap_max = HEAP_SIZE;
-
-  for (n = 0; n < elems; n++) {
-    if (tree[n * 2]/*.Freq*/ !== 0) {
-      s.heap[++s.heap_len] = max_code = n;
-      s.depth[n] = 0;
-
-    } else {
-      tree[n * 2 + 1]/*.Len*/ = 0;
-    }
-  }
-
-  /* The pkzip format requires that at least one distance code exists,
-   * and that at least one bit should be sent even if there is only one
-   * possible code. So to avoid special checks later on we force at least
-   * two codes of non zero frequency.
-   */
-  while (s.heap_len < 2) {
-    node = s.heap[++s.heap_len] = (max_code < 2 ? ++max_code : 0);
-    tree[node * 2]/*.Freq*/ = 1;
-    s.depth[node] = 0;
-    s.opt_len--;
-
-    if (has_stree) {
-      s.static_len -= stree[node * 2 + 1]/*.Len*/;
-    }
-    /* node is 0 or 1 so it does not have extra bits */
-  }
-  desc.max_code = max_code;
-
-  /* The elements heap[heap_len/2+1 .. heap_len] are leaves of the tree,
-   * establish sub-heaps of increasing lengths:
-   */
-  for (n = (s.heap_len >> 1/*int /2*/); n >= 1; n--) { pqdownheap(s, tree, n); }
-
-  /* Construct the Huffman tree by repeatedly combining the least two
-   * frequent nodes.
-   */
-  node = elems;              /* next internal node of the tree */
-  do {
-    //pqremove(s, tree, n);  /* n = node of least frequency */
-    /*** pqremove ***/
-    n = s.heap[1/*SMALLEST*/];
-    s.heap[1/*SMALLEST*/] = s.heap[s.heap_len--];
-    pqdownheap(s, tree, 1/*SMALLEST*/);
-    /***/
-
-    m = s.heap[1/*SMALLEST*/]; /* m = node of next least frequency */
-
-    s.heap[--s.heap_max] = n; /* keep the nodes sorted by frequency */
-    s.heap[--s.heap_max] = m;
-
-    /* Create a new node father of n and m */
-    tree[node * 2]/*.Freq*/ = tree[n * 2]/*.Freq*/ + tree[m * 2]/*.Freq*/;
-    s.depth[node] = (s.depth[n] >= s.depth[m] ? s.depth[n] : s.depth[m]) + 1;
-    tree[n * 2 + 1]/*.Dad*/ = tree[m * 2 + 1]/*.Dad*/ = node;
-
-    /* and insert the new node in the heap */
-    s.heap[1/*SMALLEST*/] = node++;
-    pqdownheap(s, tree, 1/*SMALLEST*/);
-
-  } while (s.heap_len >= 2);
-
-  s.heap[--s.heap_max] = s.heap[1/*SMALLEST*/];
-
-  /* At this point, the fields freq and dad are set. We can now
-   * generate the bit lengths.
-   */
-  gen_bitlen(s, desc);
-
-  /* The field len is now set, we can generate the bit codes */
-  gen_codes(tree, max_code, s.bl_count);
-}
-
-
-/* ===========================================================================
- * Scan a literal or distance tree to determine the frequencies of the codes
- * in the bit length tree.
- */
-function scan_tree(s, tree, max_code)
-//    deflate_state *s;
-//    ct_data *tree;   /* the tree to be scanned */
-//    int max_code;    /* and its largest code of non zero frequency */
-{
-  var n;                     /* iterates over all tree elements */
-  var prevlen = -1;          /* last emitted length */
-  var curlen;                /* length of current code */
-
-  var nextlen = tree[0 * 2 + 1]/*.Len*/; /* length of next code */
-
-  var count = 0;             /* repeat count of the current code */
-  var max_count = 7;         /* max repeat count */
-  var min_count = 4;         /* min repeat count */
-
-  if (nextlen === 0) {
-    max_count = 138;
-    min_count = 3;
-  }
-  tree[(max_code + 1) * 2 + 1]/*.Len*/ = 0xffff; /* guard */
-
-  for (n = 0; n <= max_code; n++) {
-    curlen = nextlen;
-    nextlen = tree[(n + 1) * 2 + 1]/*.Len*/;
-
-    if (++count < max_count && curlen === nextlen) {
-      continue;
-
-    } else if (count < min_count) {
-      s.bl_tree[curlen * 2]/*.Freq*/ += count;
-
-    } else if (curlen !== 0) {
-
-      if (curlen !== prevlen) { s.bl_tree[curlen * 2]/*.Freq*/++; }
-      s.bl_tree[REP_3_6 * 2]/*.Freq*/++;
-
-    } else if (count <= 10) {
-      s.bl_tree[REPZ_3_10 * 2]/*.Freq*/++;
-
-    } else {
-      s.bl_tree[REPZ_11_138 * 2]/*.Freq*/++;
-    }
-
-    count = 0;
-    prevlen = curlen;
-
-    if (nextlen === 0) {
-      max_count = 138;
-      min_count = 3;
-
-    } else if (curlen === nextlen) {
-      max_count = 6;
-      min_count = 3;
-
-    } else {
-      max_count = 7;
-      min_count = 4;
-    }
-  }
-}
-
-
-/* ===========================================================================
- * Send a literal or distance tree in compressed form, using the codes in
- * bl_tree.
- */
-function send_tree(s, tree, max_code)
-//    deflate_state *s;
-//    ct_data *tree; /* the tree to be scanned */
-//    int max_code;       /* and its largest code of non zero frequency */
-{
-  var n;                     /* iterates over all tree elements */
-  var prevlen = -1;          /* last emitted length */
-  var curlen;                /* length of current code */
-
-  var nextlen = tree[0 * 2 + 1]/*.Len*/; /* length of next code */
-
-  var count = 0;             /* repeat count of the current code */
-  var max_count = 7;         /* max repeat count */
-  var min_count = 4;         /* min repeat count */
-
-  /* tree[max_code+1].Len = -1; */  /* guard already set */
-  if (nextlen === 0) {
-    max_count = 138;
-    min_count = 3;
-  }
-
-  for (n = 0; n <= max_code; n++) {
-    curlen = nextlen;
-    nextlen = tree[(n + 1) * 2 + 1]/*.Len*/;
-
-    if (++count < max_count && curlen === nextlen) {
-      continue;
-
-    } else if (count < min_count) {
-      do { send_code(s, curlen, s.bl_tree); } while (--count !== 0);
-
-    } else if (curlen !== 0) {
-      if (curlen !== prevlen) {
-        send_code(s, curlen, s.bl_tree);
-        count--;
-      }
-      //Assert(count >= 3 && count <= 6, " 3_6?");
-      send_code(s, REP_3_6, s.bl_tree);
-      send_bits(s, count - 3, 2);
-
-    } else if (count <= 10) {
-      send_code(s, REPZ_3_10, s.bl_tree);
-      send_bits(s, count - 3, 3);
-
-    } else {
-      send_code(s, REPZ_11_138, s.bl_tree);
-      send_bits(s, count - 11, 7);
-    }
-
-    count = 0;
-    prevlen = curlen;
-    if (nextlen === 0) {
-      max_count = 138;
-      min_count = 3;
-
-    } else if (curlen === nextlen) {
-      max_count = 6;
-      min_count = 3;
-
-    } else {
-      max_count = 7;
-      min_count = 4;
-    }
-  }
-}
-
-
-/* ===========================================================================
- * Construct the Huffman tree for the bit lengths and return the index in
- * bl_order of the last bit length code to send.
- */
-function build_bl_tree(s) {
-  var max_blindex;  /* index of last bit length code of non zero freq */
-
-  /* Determine the bit length frequencies for literal and distance trees */
-  scan_tree(s, s.dyn_ltree, s.l_desc.max_code);
-  scan_tree(s, s.dyn_dtree, s.d_desc.max_code);
-
-  /* Build the bit length tree: */
-  build_tree(s, s.bl_desc);
-  /* opt_len now includes the length of the tree representations, except
-   * the lengths of the bit lengths codes and the 5+5+4 bits for the counts.
-   */
-
-  /* Determine the number of bit length codes to send. The pkzip format
-   * requires that at least 4 bit length codes be sent. (appnote.txt says
-   * 3 but the actual value used is 4.)
-   */
-  for (max_blindex = BL_CODES - 1; max_blindex >= 3; max_blindex--) {
-    if (s.bl_tree[bl_order[max_blindex] * 2 + 1]/*.Len*/ !== 0) {
-      break;
-    }
-  }
-  /* Update opt_len to include the bit length tree and counts */
-  s.opt_len += 3 * (max_blindex + 1) + 5 + 5 + 4;
-  //Tracev((stderr, "\ndyn trees: dyn %ld, stat %ld",
-  //        s->opt_len, s->static_len));
-
-  return max_blindex;
-}
-
-
-/* ===========================================================================
- * Send the header for a block using dynamic Huffman trees: the counts, the
- * lengths of the bit length codes, the literal tree and the distance tree.
- * IN assertion: lcodes >= 257, dcodes >= 1, blcodes >= 4.
- */
-function send_all_trees(s, lcodes, dcodes, blcodes)
-//    deflate_state *s;
-//    int lcodes, dcodes, blcodes; /* number of codes for each tree */
-{
-  var rank;                    /* index in bl_order */
-
-  //Assert (lcodes >= 257 && dcodes >= 1 && blcodes >= 4, "not enough codes");
-  //Assert (lcodes <= L_CODES && dcodes <= D_CODES && blcodes <= BL_CODES,
-  //        "too many codes");
-  //Tracev((stderr, "\nbl counts: "));
-  send_bits(s, lcodes - 257, 5); /* not +255 as stated in appnote.txt */
-  send_bits(s, dcodes - 1,   5);
-  send_bits(s, blcodes - 4,  4); /* not -3 as stated in appnote.txt */
-  for (rank = 0; rank < blcodes; rank++) {
-    //Tracev((stderr, "\nbl code %2d ", bl_order[rank]));
-    send_bits(s, s.bl_tree[bl_order[rank] * 2 + 1]/*.Len*/, 3);
-  }
-  //Tracev((stderr, "\nbl tree: sent %ld", s->bits_sent));
-
-  send_tree(s, s.dyn_ltree, lcodes - 1); /* literal tree */
-  //Tracev((stderr, "\nlit tree: sent %ld", s->bits_sent));
-
-  send_tree(s, s.dyn_dtree, dcodes - 1); /* distance tree */
-  //Tracev((stderr, "\ndist tree: sent %ld", s->bits_sent));
-}
-
-
-/* ===========================================================================
- * Check if the data type is TEXT or BINARY, using the following algorithm:
- * - TEXT if the two conditions below are satisfied:
- *    a) There are no non-portable control characters belonging to the
- *       "black list" (0..6, 14..25, 28..31).
- *    b) There is at least one printable character belonging to the
- *       "white list" (9 {TAB}, 10 {LF}, 13 {CR}, 32..255).
- * - BINARY otherwise.
- * - The following partially-portable control characters form a
- *   "gray list" that is ignored in this detection algorithm:
- *   (7 {BEL}, 8 {BS}, 11 {VT}, 12 {FF}, 26 {SUB}, 27 {ESC}).
- * IN assertion: the fields Freq of dyn_ltree are set.
- */
-function detect_data_type(s) {
-  /* black_mask is the bit mask of black-listed bytes
-   * set bits 0..6, 14..25, and 28..31
-   * 0xf3ffc07f = binary 11110011111111111100000001111111
-   */
-  var black_mask = 0xf3ffc07f;
-  var n;
-
-  /* Check for non-textual ("black-listed") bytes. */
-  for (n = 0; n <= 31; n++, black_mask >>>= 1) {
-    if ((black_mask & 1) && (s.dyn_ltree[n * 2]/*.Freq*/ !== 0)) {
-      return Z_BINARY;
-    }
-  }
-
-  /* Check for textual ("white-listed") bytes. */
-  if (s.dyn_ltree[9 * 2]/*.Freq*/ !== 0 || s.dyn_ltree[10 * 2]/*.Freq*/ !== 0 ||
-      s.dyn_ltree[13 * 2]/*.Freq*/ !== 0) {
-    return Z_TEXT;
-  }
-  for (n = 32; n < LITERALS; n++) {
-    if (s.dyn_ltree[n * 2]/*.Freq*/ !== 0) {
-      return Z_TEXT;
-    }
-  }
-
-  /* There are no "black-listed" or "white-listed" bytes:
-   * this stream either is empty or has tolerated ("gray-listed") bytes only.
-   */
-  return Z_BINARY;
-}
-
-
-var static_init_done = false;
-
-/* ===========================================================================
- * Initialize the tree data structures for a new zlib stream.
- */
-function _tr_init(s)
-{
-
-  if (!static_init_done) {
-    tr_static_init();
-    static_init_done = true;
-  }
-
-  s.l_desc  = new TreeDesc(s.dyn_ltree, static_l_desc);
-  s.d_desc  = new TreeDesc(s.dyn_dtree, static_d_desc);
-  s.bl_desc = new TreeDesc(s.bl_tree, static_bl_desc);
-
-  s.bi_buf = 0;
-  s.bi_valid = 0;
-
-  /* Initialize the first block of the first file: */
-  init_block(s);
-}
-
-
-/* ===========================================================================
- * Send a stored block
- */
-function _tr_stored_block(s, buf, stored_len, last)
-//DeflateState *s;
-//charf *buf;       /* input block */
-//ulg stored_len;   /* length of input block */
-//int last;         /* one if this is the last block for a file */
-{
-  send_bits(s, (STORED_BLOCK << 1) + (last ? 1 : 0), 3);    /* send block type */
-  copy_block(s, buf, stored_len, true); /* with header */
-}
-
-
-/* ===========================================================================
- * Send one empty static block to give enough lookahead for inflate.
- * This takes 10 bits, of which 7 may remain in the bit buffer.
- */
-function _tr_align(s) {
-  send_bits(s, STATIC_TREES << 1, 3);
-  send_code(s, END_BLOCK, static_ltree);
-  bi_flush(s);
-}
-
-
-/* ===========================================================================
- * Determine the best encoding for the current block: dynamic trees, static
- * trees or store, and output the encoded block to the zip file.
- */
-function _tr_flush_block(s, buf, stored_len, last)
-//DeflateState *s;
-//charf *buf;       /* input block, or NULL if too old */
-//ulg stored_len;   /* length of input block */
-//int last;         /* one if this is the last block for a file */
-{
-  var opt_lenb, static_lenb;  /* opt_len and static_len in bytes */
-  var max_blindex = 0;        /* index of last bit length code of non zero freq */
-
-  /* Build the Huffman trees unless a stored block is forced */
-  if (s.level > 0) {
-
-    /* Check if the file is binary or text */
-    if (s.strm.data_type === Z_UNKNOWN) {
-      s.strm.data_type = detect_data_type(s);
-    }
-
-    /* Construct the literal and distance trees */
-    build_tree(s, s.l_desc);
-    // Tracev((stderr, "\nlit data: dyn %ld, stat %ld", s->opt_len,
-    //        s->static_len));
-
-    build_tree(s, s.d_desc);
-    // Tracev((stderr, "\ndist data: dyn %ld, stat %ld", s->opt_len,
-    //        s->static_len));
-    /* At this point, opt_len and static_len are the total bit lengths of
-     * the compressed block data, excluding the tree representations.
-     */
-
-    /* Build the bit length tree for the above two trees, and get the index
-     * in bl_order of the last bit length code to send.
-     */
-    max_blindex = build_bl_tree(s);
-
-    /* Determine the best encoding. Compute the block lengths in bytes. */
-    opt_lenb = (s.opt_len + 3 + 7) >>> 3;
-    static_lenb = (s.static_len + 3 + 7) >>> 3;
-
-    // Tracev((stderr, "\nopt %lu(%lu) stat %lu(%lu) stored %lu lit %u ",
-    //        opt_lenb, s->opt_len, static_lenb, s->static_len, stored_len,
-    //        s->last_lit));
-
-    if (static_lenb <= opt_lenb) { opt_lenb = static_lenb; }
-
-  } else {
-    // Assert(buf != (char*)0, "lost buf");
-    opt_lenb = static_lenb = stored_len + 5; /* force a stored block */
-  }
-
-  if ((stored_len + 4 <= opt_lenb) && (buf !== -1)) {
-    /* 4: two words for the lengths */
-
-    /* The test buf != NULL is only necessary if LIT_BUFSIZE > WSIZE.
-     * Otherwise we can't have processed more than WSIZE input bytes since
-     * the last block flush, because compression would have been
-     * successful. If LIT_BUFSIZE <= WSIZE, it is never too late to
-     * transform a block into a stored block.
-     */
-    _tr_stored_block(s, buf, stored_len, last);
-
-  } else if (s.strategy === Z_FIXED || static_lenb === opt_lenb) {
-
-    send_bits(s, (STATIC_TREES << 1) + (last ? 1 : 0), 3);
-    compress_block(s, static_ltree, static_dtree);
-
-  } else {
-    send_bits(s, (DYN_TREES << 1) + (last ? 1 : 0), 3);
-    send_all_trees(s, s.l_desc.max_code + 1, s.d_desc.max_code + 1, max_blindex + 1);
-    compress_block(s, s.dyn_ltree, s.dyn_dtree);
-  }
-  // Assert (s->compressed_len == s->bits_sent, "bad compressed size");
-  /* The above check is made mod 2^32, for files larger than 512 MB
-   * and uLong implemented on 32 bits.
-   */
-  init_block(s);
-
-  if (last) {
-    bi_windup(s);
-  }
-  // Tracev((stderr,"\ncomprlen %lu(%lu) ", s->compressed_len>>3,
-  //       s->compressed_len-7*last));
-}
-
-/* ===========================================================================
- * Save the match info and tally the frequency counts. Return true if
- * the current block must be flushed.
- */
-function _tr_tally(s, dist, lc)
-//    deflate_state *s;
-//    unsigned dist;  /* distance of matched string */
-//    unsigned lc;    /* match length-MIN_MATCH or unmatched char (if dist==0) */
-{
-  //var out_length, in_length, dcode;
-
-  s.pending_buf[s.d_buf + s.last_lit * 2]     = (dist >>> 8) & 0xff;
-  s.pending_buf[s.d_buf + s.last_lit * 2 + 1] = dist & 0xff;
-
-  s.pending_buf[s.l_buf + s.last_lit] = lc & 0xff;
-  s.last_lit++;
-
-  if (dist === 0) {
-    /* lc is the unmatched char */
-    s.dyn_ltree[lc * 2]/*.Freq*/++;
-  } else {
-    s.matches++;
-    /* Here, lc is the match length - MIN_MATCH */
-    dist--;             /* dist = match distance - 1 */
-    //Assert((ush)dist < (ush)MAX_DIST(s) &&
-    //       (ush)lc <= (ush)(MAX_MATCH-MIN_MATCH) &&
-    //       (ush)d_code(dist) < (ush)D_CODES,  "_tr_tally: bad match");
-
-    s.dyn_ltree[(_length_code[lc] + LITERALS + 1) * 2]/*.Freq*/++;
-    s.dyn_dtree[d_code(dist) * 2]/*.Freq*/++;
-  }
-
-// (!) This block is disabled in zlib defaults,
-// don't enable it for binary compatibility
-
-//#ifdef TRUNCATE_BLOCK
-//  /* Try to guess if it is profitable to stop the current block here */
-//  if ((s.last_lit & 0x1fff) === 0 && s.level > 2) {
-//    /* Compute an upper bound for the compressed length */
-//    out_length = s.last_lit*8;
-//    in_length = s.strstart - s.block_start;
-//
-//    for (dcode = 0; dcode < D_CODES; dcode++) {
-//      out_length += s.dyn_dtree[dcode*2]/*.Freq*/ * (5 + extra_dbits[dcode]);
-//    }
-//    out_length >>>= 3;
-//    //Tracev((stderr,"\nlast_lit %u, in %ld, out ~%ld(%ld%%) ",
-//    //       s->last_lit, in_length, out_length,
-//    //       100L - out_length*100L/in_length));
-//    if (s.matches < (s.last_lit>>1)/*int /2*/ && out_length < (in_length>>1)/*int /2*/) {
-//      return true;
-//    }
-//  }
-//#endif
-
-  return (s.last_lit === s.lit_bufsize - 1);
-  /* We avoid equality with lit_bufsize because of wraparound at 64K
-   * on 16 bit machines and because stored blocks are restricted to
-   * 64K-1 bytes.
-   */
-}
-
-exports._tr_init  = _tr_init;
-exports._tr_stored_block = _tr_stored_block;
-exports._tr_flush_block  = _tr_flush_block;
-exports._tr_tally = _tr_tally;
-exports._tr_align = _tr_align;
+exports.createDirentFromStats = createDirentFromStats;
 
 
 /***/ }),
@@ -1892,1495 +714,7 @@ module.exports = function(source, encoding) {
 
 /***/ }),
 /* 47 */,
-/* 48 */
-/***/ (function(module, exports) {
-
-exports = module.exports = SemVer
-
-var debug
-/* istanbul ignore next */
-if (typeof process === 'object' &&
-    process.env &&
-    process.env.NODE_DEBUG &&
-    /\bsemver\b/i.test(process.env.NODE_DEBUG)) {
-  debug = function () {
-    var args = Array.prototype.slice.call(arguments, 0)
-    args.unshift('SEMVER')
-    console.log.apply(console, args)
-  }
-} else {
-  debug = function () {}
-}
-
-// Note: this is the semver.org version of the spec that it implements
-// Not necessarily the package version of this code.
-exports.SEMVER_SPEC_VERSION = '2.0.0'
-
-var MAX_LENGTH = 256
-var MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER ||
-  /* istanbul ignore next */ 9007199254740991
-
-// Max safe segment length for coercion.
-var MAX_SAFE_COMPONENT_LENGTH = 16
-
-// The actual regexps go on exports.re
-var re = exports.re = []
-var src = exports.src = []
-var R = 0
-
-// The following Regular Expressions can be used for tokenizing,
-// validating, and parsing SemVer version strings.
-
-// ## Numeric Identifier
-// A single `0`, or a non-zero digit followed by zero or more digits.
-
-var NUMERICIDENTIFIER = R++
-src[NUMERICIDENTIFIER] = '0|[1-9]\\d*'
-var NUMERICIDENTIFIERLOOSE = R++
-src[NUMERICIDENTIFIERLOOSE] = '[0-9]+'
-
-// ## Non-numeric Identifier
-// Zero or more digits, followed by a letter or hyphen, and then zero or
-// more letters, digits, or hyphens.
-
-var NONNUMERICIDENTIFIER = R++
-src[NONNUMERICIDENTIFIER] = '\\d*[a-zA-Z-][a-zA-Z0-9-]*'
-
-// ## Main Version
-// Three dot-separated numeric identifiers.
-
-var MAINVERSION = R++
-src[MAINVERSION] = '(' + src[NUMERICIDENTIFIER] + ')\\.' +
-                   '(' + src[NUMERICIDENTIFIER] + ')\\.' +
-                   '(' + src[NUMERICIDENTIFIER] + ')'
-
-var MAINVERSIONLOOSE = R++
-src[MAINVERSIONLOOSE] = '(' + src[NUMERICIDENTIFIERLOOSE] + ')\\.' +
-                        '(' + src[NUMERICIDENTIFIERLOOSE] + ')\\.' +
-                        '(' + src[NUMERICIDENTIFIERLOOSE] + ')'
-
-// ## Pre-release Version Identifier
-// A numeric identifier, or a non-numeric identifier.
-
-var PRERELEASEIDENTIFIER = R++
-src[PRERELEASEIDENTIFIER] = '(?:' + src[NUMERICIDENTIFIER] +
-                            '|' + src[NONNUMERICIDENTIFIER] + ')'
-
-var PRERELEASEIDENTIFIERLOOSE = R++
-src[PRERELEASEIDENTIFIERLOOSE] = '(?:' + src[NUMERICIDENTIFIERLOOSE] +
-                                 '|' + src[NONNUMERICIDENTIFIER] + ')'
-
-// ## Pre-release Version
-// Hyphen, followed by one or more dot-separated pre-release version
-// identifiers.
-
-var PRERELEASE = R++
-src[PRERELEASE] = '(?:-(' + src[PRERELEASEIDENTIFIER] +
-                  '(?:\\.' + src[PRERELEASEIDENTIFIER] + ')*))'
-
-var PRERELEASELOOSE = R++
-src[PRERELEASELOOSE] = '(?:-?(' + src[PRERELEASEIDENTIFIERLOOSE] +
-                       '(?:\\.' + src[PRERELEASEIDENTIFIERLOOSE] + ')*))'
-
-// ## Build Metadata Identifier
-// Any combination of digits, letters, or hyphens.
-
-var BUILDIDENTIFIER = R++
-src[BUILDIDENTIFIER] = '[0-9A-Za-z-]+'
-
-// ## Build Metadata
-// Plus sign, followed by one or more period-separated build metadata
-// identifiers.
-
-var BUILD = R++
-src[BUILD] = '(?:\\+(' + src[BUILDIDENTIFIER] +
-             '(?:\\.' + src[BUILDIDENTIFIER] + ')*))'
-
-// ## Full Version String
-// A main version, followed optionally by a pre-release version and
-// build metadata.
-
-// Note that the only major, minor, patch, and pre-release sections of
-// the version string are capturing groups.  The build metadata is not a
-// capturing group, because it should not ever be used in version
-// comparison.
-
-var FULL = R++
-var FULLPLAIN = 'v?' + src[MAINVERSION] +
-                src[PRERELEASE] + '?' +
-                src[BUILD] + '?'
-
-src[FULL] = '^' + FULLPLAIN + '$'
-
-// like full, but allows v1.2.3 and =1.2.3, which people do sometimes.
-// also, 1.0.0alpha1 (prerelease without the hyphen) which is pretty
-// common in the npm registry.
-var LOOSEPLAIN = '[v=\\s]*' + src[MAINVERSIONLOOSE] +
-                 src[PRERELEASELOOSE] + '?' +
-                 src[BUILD] + '?'
-
-var LOOSE = R++
-src[LOOSE] = '^' + LOOSEPLAIN + '$'
-
-var GTLT = R++
-src[GTLT] = '((?:<|>)?=?)'
-
-// Something like "2.*" or "1.2.x".
-// Note that "x.x" is a valid xRange identifer, meaning "any version"
-// Only the first item is strictly required.
-var XRANGEIDENTIFIERLOOSE = R++
-src[XRANGEIDENTIFIERLOOSE] = src[NUMERICIDENTIFIERLOOSE] + '|x|X|\\*'
-var XRANGEIDENTIFIER = R++
-src[XRANGEIDENTIFIER] = src[NUMERICIDENTIFIER] + '|x|X|\\*'
-
-var XRANGEPLAIN = R++
-src[XRANGEPLAIN] = '[v=\\s]*(' + src[XRANGEIDENTIFIER] + ')' +
-                   '(?:\\.(' + src[XRANGEIDENTIFIER] + ')' +
-                   '(?:\\.(' + src[XRANGEIDENTIFIER] + ')' +
-                   '(?:' + src[PRERELEASE] + ')?' +
-                   src[BUILD] + '?' +
-                   ')?)?'
-
-var XRANGEPLAINLOOSE = R++
-src[XRANGEPLAINLOOSE] = '[v=\\s]*(' + src[XRANGEIDENTIFIERLOOSE] + ')' +
-                        '(?:\\.(' + src[XRANGEIDENTIFIERLOOSE] + ')' +
-                        '(?:\\.(' + src[XRANGEIDENTIFIERLOOSE] + ')' +
-                        '(?:' + src[PRERELEASELOOSE] + ')?' +
-                        src[BUILD] + '?' +
-                        ')?)?'
-
-var XRANGE = R++
-src[XRANGE] = '^' + src[GTLT] + '\\s*' + src[XRANGEPLAIN] + '$'
-var XRANGELOOSE = R++
-src[XRANGELOOSE] = '^' + src[GTLT] + '\\s*' + src[XRANGEPLAINLOOSE] + '$'
-
-// Coercion.
-// Extract anything that could conceivably be a part of a valid semver
-var COERCE = R++
-src[COERCE] = '(?:^|[^\\d])' +
-              '(\\d{1,' + MAX_SAFE_COMPONENT_LENGTH + '})' +
-              '(?:\\.(\\d{1,' + MAX_SAFE_COMPONENT_LENGTH + '}))?' +
-              '(?:\\.(\\d{1,' + MAX_SAFE_COMPONENT_LENGTH + '}))?' +
-              '(?:$|[^\\d])'
-
-// Tilde ranges.
-// Meaning is "reasonably at or greater than"
-var LONETILDE = R++
-src[LONETILDE] = '(?:~>?)'
-
-var TILDETRIM = R++
-src[TILDETRIM] = '(\\s*)' + src[LONETILDE] + '\\s+'
-re[TILDETRIM] = new RegExp(src[TILDETRIM], 'g')
-var tildeTrimReplace = '$1~'
-
-var TILDE = R++
-src[TILDE] = '^' + src[LONETILDE] + src[XRANGEPLAIN] + '$'
-var TILDELOOSE = R++
-src[TILDELOOSE] = '^' + src[LONETILDE] + src[XRANGEPLAINLOOSE] + '$'
-
-// Caret ranges.
-// Meaning is "at least and backwards compatible with"
-var LONECARET = R++
-src[LONECARET] = '(?:\\^)'
-
-var CARETTRIM = R++
-src[CARETTRIM] = '(\\s*)' + src[LONECARET] + '\\s+'
-re[CARETTRIM] = new RegExp(src[CARETTRIM], 'g')
-var caretTrimReplace = '$1^'
-
-var CARET = R++
-src[CARET] = '^' + src[LONECARET] + src[XRANGEPLAIN] + '$'
-var CARETLOOSE = R++
-src[CARETLOOSE] = '^' + src[LONECARET] + src[XRANGEPLAINLOOSE] + '$'
-
-// A simple gt/lt/eq thing, or just "" to indicate "any version"
-var COMPARATORLOOSE = R++
-src[COMPARATORLOOSE] = '^' + src[GTLT] + '\\s*(' + LOOSEPLAIN + ')$|^$'
-var COMPARATOR = R++
-src[COMPARATOR] = '^' + src[GTLT] + '\\s*(' + FULLPLAIN + ')$|^$'
-
-// An expression to strip any whitespace between the gtlt and the thing
-// it modifies, so that `> 1.2.3` ==> `>1.2.3`
-var COMPARATORTRIM = R++
-src[COMPARATORTRIM] = '(\\s*)' + src[GTLT] +
-                      '\\s*(' + LOOSEPLAIN + '|' + src[XRANGEPLAIN] + ')'
-
-// this one has to use the /g flag
-re[COMPARATORTRIM] = new RegExp(src[COMPARATORTRIM], 'g')
-var comparatorTrimReplace = '$1$2$3'
-
-// Something like `1.2.3 - 1.2.4`
-// Note that these all use the loose form, because they'll be
-// checked against either the strict or loose comparator form
-// later.
-var HYPHENRANGE = R++
-src[HYPHENRANGE] = '^\\s*(' + src[XRANGEPLAIN] + ')' +
-                   '\\s+-\\s+' +
-                   '(' + src[XRANGEPLAIN] + ')' +
-                   '\\s*$'
-
-var HYPHENRANGELOOSE = R++
-src[HYPHENRANGELOOSE] = '^\\s*(' + src[XRANGEPLAINLOOSE] + ')' +
-                        '\\s+-\\s+' +
-                        '(' + src[XRANGEPLAINLOOSE] + ')' +
-                        '\\s*$'
-
-// Star ranges basically just allow anything at all.
-var STAR = R++
-src[STAR] = '(<|>)?=?\\s*\\*'
-
-// Compile to actual regexp objects.
-// All are flag-free, unless they were created above with a flag.
-for (var i = 0; i < R; i++) {
-  debug(i, src[i])
-  if (!re[i]) {
-    re[i] = new RegExp(src[i])
-  }
-}
-
-exports.parse = parse
-function parse (version, options) {
-  if (!options || typeof options !== 'object') {
-    options = {
-      loose: !!options,
-      includePrerelease: false
-    }
-  }
-
-  if (version instanceof SemVer) {
-    return version
-  }
-
-  if (typeof version !== 'string') {
-    return null
-  }
-
-  if (version.length > MAX_LENGTH) {
-    return null
-  }
-
-  var r = options.loose ? re[LOOSE] : re[FULL]
-  if (!r.test(version)) {
-    return null
-  }
-
-  try {
-    return new SemVer(version, options)
-  } catch (er) {
-    return null
-  }
-}
-
-exports.valid = valid
-function valid (version, options) {
-  var v = parse(version, options)
-  return v ? v.version : null
-}
-
-exports.clean = clean
-function clean (version, options) {
-  var s = parse(version.trim().replace(/^[=v]+/, ''), options)
-  return s ? s.version : null
-}
-
-exports.SemVer = SemVer
-
-function SemVer (version, options) {
-  if (!options || typeof options !== 'object') {
-    options = {
-      loose: !!options,
-      includePrerelease: false
-    }
-  }
-  if (version instanceof SemVer) {
-    if (version.loose === options.loose) {
-      return version
-    } else {
-      version = version.version
-    }
-  } else if (typeof version !== 'string') {
-    throw new TypeError('Invalid Version: ' + version)
-  }
-
-  if (version.length > MAX_LENGTH) {
-    throw new TypeError('version is longer than ' + MAX_LENGTH + ' characters')
-  }
-
-  if (!(this instanceof SemVer)) {
-    return new SemVer(version, options)
-  }
-
-  debug('SemVer', version, options)
-  this.options = options
-  this.loose = !!options.loose
-
-  var m = version.trim().match(options.loose ? re[LOOSE] : re[FULL])
-
-  if (!m) {
-    throw new TypeError('Invalid Version: ' + version)
-  }
-
-  this.raw = version
-
-  // these are actually numbers
-  this.major = +m[1]
-  this.minor = +m[2]
-  this.patch = +m[3]
-
-  if (this.major > MAX_SAFE_INTEGER || this.major < 0) {
-    throw new TypeError('Invalid major version')
-  }
-
-  if (this.minor > MAX_SAFE_INTEGER || this.minor < 0) {
-    throw new TypeError('Invalid minor version')
-  }
-
-  if (this.patch > MAX_SAFE_INTEGER || this.patch < 0) {
-    throw new TypeError('Invalid patch version')
-  }
-
-  // numberify any prerelease numeric ids
-  if (!m[4]) {
-    this.prerelease = []
-  } else {
-    this.prerelease = m[4].split('.').map(function (id) {
-      if (/^[0-9]+$/.test(id)) {
-        var num = +id
-        if (num >= 0 && num < MAX_SAFE_INTEGER) {
-          return num
-        }
-      }
-      return id
-    })
-  }
-
-  this.build = m[5] ? m[5].split('.') : []
-  this.format()
-}
-
-SemVer.prototype.format = function () {
-  this.version = this.major + '.' + this.minor + '.' + this.patch
-  if (this.prerelease.length) {
-    this.version += '-' + this.prerelease.join('.')
-  }
-  return this.version
-}
-
-SemVer.prototype.toString = function () {
-  return this.version
-}
-
-SemVer.prototype.compare = function (other) {
-  debug('SemVer.compare', this.version, this.options, other)
-  if (!(other instanceof SemVer)) {
-    other = new SemVer(other, this.options)
-  }
-
-  return this.compareMain(other) || this.comparePre(other)
-}
-
-SemVer.prototype.compareMain = function (other) {
-  if (!(other instanceof SemVer)) {
-    other = new SemVer(other, this.options)
-  }
-
-  return compareIdentifiers(this.major, other.major) ||
-         compareIdentifiers(this.minor, other.minor) ||
-         compareIdentifiers(this.patch, other.patch)
-}
-
-SemVer.prototype.comparePre = function (other) {
-  if (!(other instanceof SemVer)) {
-    other = new SemVer(other, this.options)
-  }
-
-  // NOT having a prerelease is > having one
-  if (this.prerelease.length && !other.prerelease.length) {
-    return -1
-  } else if (!this.prerelease.length && other.prerelease.length) {
-    return 1
-  } else if (!this.prerelease.length && !other.prerelease.length) {
-    return 0
-  }
-
-  var i = 0
-  do {
-    var a = this.prerelease[i]
-    var b = other.prerelease[i]
-    debug('prerelease compare', i, a, b)
-    if (a === undefined && b === undefined) {
-      return 0
-    } else if (b === undefined) {
-      return 1
-    } else if (a === undefined) {
-      return -1
-    } else if (a === b) {
-      continue
-    } else {
-      return compareIdentifiers(a, b)
-    }
-  } while (++i)
-}
-
-// preminor will bump the version up to the next minor release, and immediately
-// down to pre-release. premajor and prepatch work the same way.
-SemVer.prototype.inc = function (release, identifier) {
-  switch (release) {
-    case 'premajor':
-      this.prerelease.length = 0
-      this.patch = 0
-      this.minor = 0
-      this.major++
-      this.inc('pre', identifier)
-      break
-    case 'preminor':
-      this.prerelease.length = 0
-      this.patch = 0
-      this.minor++
-      this.inc('pre', identifier)
-      break
-    case 'prepatch':
-      // If this is already a prerelease, it will bump to the next version
-      // drop any prereleases that might already exist, since they are not
-      // relevant at this point.
-      this.prerelease.length = 0
-      this.inc('patch', identifier)
-      this.inc('pre', identifier)
-      break
-    // If the input is a non-prerelease version, this acts the same as
-    // prepatch.
-    case 'prerelease':
-      if (this.prerelease.length === 0) {
-        this.inc('patch', identifier)
-      }
-      this.inc('pre', identifier)
-      break
-
-    case 'major':
-      // If this is a pre-major version, bump up to the same major version.
-      // Otherwise increment major.
-      // 1.0.0-5 bumps to 1.0.0
-      // 1.1.0 bumps to 2.0.0
-      if (this.minor !== 0 ||
-          this.patch !== 0 ||
-          this.prerelease.length === 0) {
-        this.major++
-      }
-      this.minor = 0
-      this.patch = 0
-      this.prerelease = []
-      break
-    case 'minor':
-      // If this is a pre-minor version, bump up to the same minor version.
-      // Otherwise increment minor.
-      // 1.2.0-5 bumps to 1.2.0
-      // 1.2.1 bumps to 1.3.0
-      if (this.patch !== 0 || this.prerelease.length === 0) {
-        this.minor++
-      }
-      this.patch = 0
-      this.prerelease = []
-      break
-    case 'patch':
-      // If this is not a pre-release version, it will increment the patch.
-      // If it is a pre-release it will bump up to the same patch version.
-      // 1.2.0-5 patches to 1.2.0
-      // 1.2.0 patches to 1.2.1
-      if (this.prerelease.length === 0) {
-        this.patch++
-      }
-      this.prerelease = []
-      break
-    // This probably shouldn't be used publicly.
-    // 1.0.0 "pre" would become 1.0.0-0 which is the wrong direction.
-    case 'pre':
-      if (this.prerelease.length === 0) {
-        this.prerelease = [0]
-      } else {
-        var i = this.prerelease.length
-        while (--i >= 0) {
-          if (typeof this.prerelease[i] === 'number') {
-            this.prerelease[i]++
-            i = -2
-          }
-        }
-        if (i === -1) {
-          // didn't increment anything
-          this.prerelease.push(0)
-        }
-      }
-      if (identifier) {
-        // 1.2.0-beta.1 bumps to 1.2.0-beta.2,
-        // 1.2.0-beta.fooblz or 1.2.0-beta bumps to 1.2.0-beta.0
-        if (this.prerelease[0] === identifier) {
-          if (isNaN(this.prerelease[1])) {
-            this.prerelease = [identifier, 0]
-          }
-        } else {
-          this.prerelease = [identifier, 0]
-        }
-      }
-      break
-
-    default:
-      throw new Error('invalid increment argument: ' + release)
-  }
-  this.format()
-  this.raw = this.version
-  return this
-}
-
-exports.inc = inc
-function inc (version, release, loose, identifier) {
-  if (typeof (loose) === 'string') {
-    identifier = loose
-    loose = undefined
-  }
-
-  try {
-    return new SemVer(version, loose).inc(release, identifier).version
-  } catch (er) {
-    return null
-  }
-}
-
-exports.diff = diff
-function diff (version1, version2) {
-  if (eq(version1, version2)) {
-    return null
-  } else {
-    var v1 = parse(version1)
-    var v2 = parse(version2)
-    var prefix = ''
-    if (v1.prerelease.length || v2.prerelease.length) {
-      prefix = 'pre'
-      var defaultResult = 'prerelease'
-    }
-    for (var key in v1) {
-      if (key === 'major' || key === 'minor' || key === 'patch') {
-        if (v1[key] !== v2[key]) {
-          return prefix + key
-        }
-      }
-    }
-    return defaultResult // may be undefined
-  }
-}
-
-exports.compareIdentifiers = compareIdentifiers
-
-var numeric = /^[0-9]+$/
-function compareIdentifiers (a, b) {
-  var anum = numeric.test(a)
-  var bnum = numeric.test(b)
-
-  if (anum && bnum) {
-    a = +a
-    b = +b
-  }
-
-  return a === b ? 0
-    : (anum && !bnum) ? -1
-    : (bnum && !anum) ? 1
-    : a < b ? -1
-    : 1
-}
-
-exports.rcompareIdentifiers = rcompareIdentifiers
-function rcompareIdentifiers (a, b) {
-  return compareIdentifiers(b, a)
-}
-
-exports.major = major
-function major (a, loose) {
-  return new SemVer(a, loose).major
-}
-
-exports.minor = minor
-function minor (a, loose) {
-  return new SemVer(a, loose).minor
-}
-
-exports.patch = patch
-function patch (a, loose) {
-  return new SemVer(a, loose).patch
-}
-
-exports.compare = compare
-function compare (a, b, loose) {
-  return new SemVer(a, loose).compare(new SemVer(b, loose))
-}
-
-exports.compareLoose = compareLoose
-function compareLoose (a, b) {
-  return compare(a, b, true)
-}
-
-exports.rcompare = rcompare
-function rcompare (a, b, loose) {
-  return compare(b, a, loose)
-}
-
-exports.sort = sort
-function sort (list, loose) {
-  return list.sort(function (a, b) {
-    return exports.compare(a, b, loose)
-  })
-}
-
-exports.rsort = rsort
-function rsort (list, loose) {
-  return list.sort(function (a, b) {
-    return exports.rcompare(a, b, loose)
-  })
-}
-
-exports.gt = gt
-function gt (a, b, loose) {
-  return compare(a, b, loose) > 0
-}
-
-exports.lt = lt
-function lt (a, b, loose) {
-  return compare(a, b, loose) < 0
-}
-
-exports.eq = eq
-function eq (a, b, loose) {
-  return compare(a, b, loose) === 0
-}
-
-exports.neq = neq
-function neq (a, b, loose) {
-  return compare(a, b, loose) !== 0
-}
-
-exports.gte = gte
-function gte (a, b, loose) {
-  return compare(a, b, loose) >= 0
-}
-
-exports.lte = lte
-function lte (a, b, loose) {
-  return compare(a, b, loose) <= 0
-}
-
-exports.cmp = cmp
-function cmp (a, op, b, loose) {
-  switch (op) {
-    case '===':
-      if (typeof a === 'object')
-        a = a.version
-      if (typeof b === 'object')
-        b = b.version
-      return a === b
-
-    case '!==':
-      if (typeof a === 'object')
-        a = a.version
-      if (typeof b === 'object')
-        b = b.version
-      return a !== b
-
-    case '':
-    case '=':
-    case '==':
-      return eq(a, b, loose)
-
-    case '!=':
-      return neq(a, b, loose)
-
-    case '>':
-      return gt(a, b, loose)
-
-    case '>=':
-      return gte(a, b, loose)
-
-    case '<':
-      return lt(a, b, loose)
-
-    case '<=':
-      return lte(a, b, loose)
-
-    default:
-      throw new TypeError('Invalid operator: ' + op)
-  }
-}
-
-exports.Comparator = Comparator
-function Comparator (comp, options) {
-  if (!options || typeof options !== 'object') {
-    options = {
-      loose: !!options,
-      includePrerelease: false
-    }
-  }
-
-  if (comp instanceof Comparator) {
-    if (comp.loose === !!options.loose) {
-      return comp
-    } else {
-      comp = comp.value
-    }
-  }
-
-  if (!(this instanceof Comparator)) {
-    return new Comparator(comp, options)
-  }
-
-  debug('comparator', comp, options)
-  this.options = options
-  this.loose = !!options.loose
-  this.parse(comp)
-
-  if (this.semver === ANY) {
-    this.value = ''
-  } else {
-    this.value = this.operator + this.semver.version
-  }
-
-  debug('comp', this)
-}
-
-var ANY = {}
-Comparator.prototype.parse = function (comp) {
-  var r = this.options.loose ? re[COMPARATORLOOSE] : re[COMPARATOR]
-  var m = comp.match(r)
-
-  if (!m) {
-    throw new TypeError('Invalid comparator: ' + comp)
-  }
-
-  this.operator = m[1]
-  if (this.operator === '=') {
-    this.operator = ''
-  }
-
-  // if it literally is just '>' or '' then allow anything.
-  if (!m[2]) {
-    this.semver = ANY
-  } else {
-    this.semver = new SemVer(m[2], this.options.loose)
-  }
-}
-
-Comparator.prototype.toString = function () {
-  return this.value
-}
-
-Comparator.prototype.test = function (version) {
-  debug('Comparator.test', version, this.options.loose)
-
-  if (this.semver === ANY) {
-    return true
-  }
-
-  if (typeof version === 'string') {
-    version = new SemVer(version, this.options)
-  }
-
-  return cmp(version, this.operator, this.semver, this.options)
-}
-
-Comparator.prototype.intersects = function (comp, options) {
-  if (!(comp instanceof Comparator)) {
-    throw new TypeError('a Comparator is required')
-  }
-
-  if (!options || typeof options !== 'object') {
-    options = {
-      loose: !!options,
-      includePrerelease: false
-    }
-  }
-
-  var rangeTmp
-
-  if (this.operator === '') {
-    rangeTmp = new Range(comp.value, options)
-    return satisfies(this.value, rangeTmp, options)
-  } else if (comp.operator === '') {
-    rangeTmp = new Range(this.value, options)
-    return satisfies(comp.semver, rangeTmp, options)
-  }
-
-  var sameDirectionIncreasing =
-    (this.operator === '>=' || this.operator === '>') &&
-    (comp.operator === '>=' || comp.operator === '>')
-  var sameDirectionDecreasing =
-    (this.operator === '<=' || this.operator === '<') &&
-    (comp.operator === '<=' || comp.operator === '<')
-  var sameSemVer = this.semver.version === comp.semver.version
-  var differentDirectionsInclusive =
-    (this.operator === '>=' || this.operator === '<=') &&
-    (comp.operator === '>=' || comp.operator === '<=')
-  var oppositeDirectionsLessThan =
-    cmp(this.semver, '<', comp.semver, options) &&
-    ((this.operator === '>=' || this.operator === '>') &&
-    (comp.operator === '<=' || comp.operator === '<'))
-  var oppositeDirectionsGreaterThan =
-    cmp(this.semver, '>', comp.semver, options) &&
-    ((this.operator === '<=' || this.operator === '<') &&
-    (comp.operator === '>=' || comp.operator === '>'))
-
-  return sameDirectionIncreasing || sameDirectionDecreasing ||
-    (sameSemVer && differentDirectionsInclusive) ||
-    oppositeDirectionsLessThan || oppositeDirectionsGreaterThan
-}
-
-exports.Range = Range
-function Range (range, options) {
-  if (!options || typeof options !== 'object') {
-    options = {
-      loose: !!options,
-      includePrerelease: false
-    }
-  }
-
-  if (range instanceof Range) {
-    if (range.loose === !!options.loose &&
-        range.includePrerelease === !!options.includePrerelease) {
-      return range
-    } else {
-      return new Range(range.raw, options)
-    }
-  }
-
-  if (range instanceof Comparator) {
-    return new Range(range.value, options)
-  }
-
-  if (!(this instanceof Range)) {
-    return new Range(range, options)
-  }
-
-  this.options = options
-  this.loose = !!options.loose
-  this.includePrerelease = !!options.includePrerelease
-
-  // First, split based on boolean or ||
-  this.raw = range
-  this.set = range.split(/\s*\|\|\s*/).map(function (range) {
-    return this.parseRange(range.trim())
-  }, this).filter(function (c) {
-    // throw out any that are not relevant for whatever reason
-    return c.length
-  })
-
-  if (!this.set.length) {
-    throw new TypeError('Invalid SemVer Range: ' + range)
-  }
-
-  this.format()
-}
-
-Range.prototype.format = function () {
-  this.range = this.set.map(function (comps) {
-    return comps.join(' ').trim()
-  }).join('||').trim()
-  return this.range
-}
-
-Range.prototype.toString = function () {
-  return this.range
-}
-
-Range.prototype.parseRange = function (range) {
-  var loose = this.options.loose
-  range = range.trim()
-  // `1.2.3 - 1.2.4` => `>=1.2.3 <=1.2.4`
-  var hr = loose ? re[HYPHENRANGELOOSE] : re[HYPHENRANGE]
-  range = range.replace(hr, hyphenReplace)
-  debug('hyphen replace', range)
-  // `> 1.2.3 < 1.2.5` => `>1.2.3 <1.2.5`
-  range = range.replace(re[COMPARATORTRIM], comparatorTrimReplace)
-  debug('comparator trim', range, re[COMPARATORTRIM])
-
-  // `~ 1.2.3` => `~1.2.3`
-  range = range.replace(re[TILDETRIM], tildeTrimReplace)
-
-  // `^ 1.2.3` => `^1.2.3`
-  range = range.replace(re[CARETTRIM], caretTrimReplace)
-
-  // normalize spaces
-  range = range.split(/\s+/).join(' ')
-
-  // At this point, the range is completely trimmed and
-  // ready to be split into comparators.
-
-  var compRe = loose ? re[COMPARATORLOOSE] : re[COMPARATOR]
-  var set = range.split(' ').map(function (comp) {
-    return parseComparator(comp, this.options)
-  }, this).join(' ').split(/\s+/)
-  if (this.options.loose) {
-    // in loose mode, throw out any that are not valid comparators
-    set = set.filter(function (comp) {
-      return !!comp.match(compRe)
-    })
-  }
-  set = set.map(function (comp) {
-    return new Comparator(comp, this.options)
-  }, this)
-
-  return set
-}
-
-Range.prototype.intersects = function (range, options) {
-  if (!(range instanceof Range)) {
-    throw new TypeError('a Range is required')
-  }
-
-  return this.set.some(function (thisComparators) {
-    return thisComparators.every(function (thisComparator) {
-      return range.set.some(function (rangeComparators) {
-        return rangeComparators.every(function (rangeComparator) {
-          return thisComparator.intersects(rangeComparator, options)
-        })
-      })
-    })
-  })
-}
-
-// Mostly just for testing and legacy API reasons
-exports.toComparators = toComparators
-function toComparators (range, options) {
-  return new Range(range, options).set.map(function (comp) {
-    return comp.map(function (c) {
-      return c.value
-    }).join(' ').trim().split(' ')
-  })
-}
-
-// comprised of xranges, tildes, stars, and gtlt's at this point.
-// already replaced the hyphen ranges
-// turn into a set of JUST comparators.
-function parseComparator (comp, options) {
-  debug('comp', comp, options)
-  comp = replaceCarets(comp, options)
-  debug('caret', comp)
-  comp = replaceTildes(comp, options)
-  debug('tildes', comp)
-  comp = replaceXRanges(comp, options)
-  debug('xrange', comp)
-  comp = replaceStars(comp, options)
-  debug('stars', comp)
-  return comp
-}
-
-function isX (id) {
-  return !id || id.toLowerCase() === 'x' || id === '*'
-}
-
-// ~, ~> --> * (any, kinda silly)
-// ~2, ~2.x, ~2.x.x, ~>2, ~>2.x ~>2.x.x --> >=2.0.0 <3.0.0
-// ~2.0, ~2.0.x, ~>2.0, ~>2.0.x --> >=2.0.0 <2.1.0
-// ~1.2, ~1.2.x, ~>1.2, ~>1.2.x --> >=1.2.0 <1.3.0
-// ~1.2.3, ~>1.2.3 --> >=1.2.3 <1.3.0
-// ~1.2.0, ~>1.2.0 --> >=1.2.0 <1.3.0
-function replaceTildes (comp, options) {
-  return comp.trim().split(/\s+/).map(function (comp) {
-    return replaceTilde(comp, options)
-  }).join(' ')
-}
-
-function replaceTilde (comp, options) {
-  var r = options.loose ? re[TILDELOOSE] : re[TILDE]
-  return comp.replace(r, function (_, M, m, p, pr) {
-    debug('tilde', comp, _, M, m, p, pr)
-    var ret
-
-    if (isX(M)) {
-      ret = ''
-    } else if (isX(m)) {
-      ret = '>=' + M + '.0.0 <' + (+M + 1) + '.0.0'
-    } else if (isX(p)) {
-      // ~1.2 == >=1.2.0 <1.3.0
-      ret = '>=' + M + '.' + m + '.0 <' + M + '.' + (+m + 1) + '.0'
-    } else if (pr) {
-      debug('replaceTilde pr', pr)
-      ret = '>=' + M + '.' + m + '.' + p + '-' + pr +
-            ' <' + M + '.' + (+m + 1) + '.0'
-    } else {
-      // ~1.2.3 == >=1.2.3 <1.3.0
-      ret = '>=' + M + '.' + m + '.' + p +
-            ' <' + M + '.' + (+m + 1) + '.0'
-    }
-
-    debug('tilde return', ret)
-    return ret
-  })
-}
-
-// ^ --> * (any, kinda silly)
-// ^2, ^2.x, ^2.x.x --> >=2.0.0 <3.0.0
-// ^2.0, ^2.0.x --> >=2.0.0 <3.0.0
-// ^1.2, ^1.2.x --> >=1.2.0 <2.0.0
-// ^1.2.3 --> >=1.2.3 <2.0.0
-// ^1.2.0 --> >=1.2.0 <2.0.0
-function replaceCarets (comp, options) {
-  return comp.trim().split(/\s+/).map(function (comp) {
-    return replaceCaret(comp, options)
-  }).join(' ')
-}
-
-function replaceCaret (comp, options) {
-  debug('caret', comp, options)
-  var r = options.loose ? re[CARETLOOSE] : re[CARET]
-  return comp.replace(r, function (_, M, m, p, pr) {
-    debug('caret', comp, _, M, m, p, pr)
-    var ret
-
-    if (isX(M)) {
-      ret = ''
-    } else if (isX(m)) {
-      ret = '>=' + M + '.0.0 <' + (+M + 1) + '.0.0'
-    } else if (isX(p)) {
-      if (M === '0') {
-        ret = '>=' + M + '.' + m + '.0 <' + M + '.' + (+m + 1) + '.0'
-      } else {
-        ret = '>=' + M + '.' + m + '.0 <' + (+M + 1) + '.0.0'
-      }
-    } else if (pr) {
-      debug('replaceCaret pr', pr)
-      if (M === '0') {
-        if (m === '0') {
-          ret = '>=' + M + '.' + m + '.' + p + '-' + pr +
-                ' <' + M + '.' + m + '.' + (+p + 1)
-        } else {
-          ret = '>=' + M + '.' + m + '.' + p + '-' + pr +
-                ' <' + M + '.' + (+m + 1) + '.0'
-        }
-      } else {
-        ret = '>=' + M + '.' + m + '.' + p + '-' + pr +
-              ' <' + (+M + 1) + '.0.0'
-      }
-    } else {
-      debug('no pr')
-      if (M === '0') {
-        if (m === '0') {
-          ret = '>=' + M + '.' + m + '.' + p +
-                ' <' + M + '.' + m + '.' + (+p + 1)
-        } else {
-          ret = '>=' + M + '.' + m + '.' + p +
-                ' <' + M + '.' + (+m + 1) + '.0'
-        }
-      } else {
-        ret = '>=' + M + '.' + m + '.' + p +
-              ' <' + (+M + 1) + '.0.0'
-      }
-    }
-
-    debug('caret return', ret)
-    return ret
-  })
-}
-
-function replaceXRanges (comp, options) {
-  debug('replaceXRanges', comp, options)
-  return comp.split(/\s+/).map(function (comp) {
-    return replaceXRange(comp, options)
-  }).join(' ')
-}
-
-function replaceXRange (comp, options) {
-  comp = comp.trim()
-  var r = options.loose ? re[XRANGELOOSE] : re[XRANGE]
-  return comp.replace(r, function (ret, gtlt, M, m, p, pr) {
-    debug('xRange', comp, ret, gtlt, M, m, p, pr)
-    var xM = isX(M)
-    var xm = xM || isX(m)
-    var xp = xm || isX(p)
-    var anyX = xp
-
-    if (gtlt === '=' && anyX) {
-      gtlt = ''
-    }
-
-    if (xM) {
-      if (gtlt === '>' || gtlt === '<') {
-        // nothing is allowed
-        ret = '<0.0.0'
-      } else {
-        // nothing is forbidden
-        ret = '*'
-      }
-    } else if (gtlt && anyX) {
-      // we know patch is an x, because we have any x at all.
-      // replace X with 0
-      if (xm) {
-        m = 0
-      }
-      p = 0
-
-      if (gtlt === '>') {
-        // >1 => >=2.0.0
-        // >1.2 => >=1.3.0
-        // >1.2.3 => >= 1.2.4
-        gtlt = '>='
-        if (xm) {
-          M = +M + 1
-          m = 0
-          p = 0
-        } else {
-          m = +m + 1
-          p = 0
-        }
-      } else if (gtlt === '<=') {
-        // <=0.7.x is actually <0.8.0, since any 0.7.x should
-        // pass.  Similarly, <=7.x is actually <8.0.0, etc.
-        gtlt = '<'
-        if (xm) {
-          M = +M + 1
-        } else {
-          m = +m + 1
-        }
-      }
-
-      ret = gtlt + M + '.' + m + '.' + p
-    } else if (xm) {
-      ret = '>=' + M + '.0.0 <' + (+M + 1) + '.0.0'
-    } else if (xp) {
-      ret = '>=' + M + '.' + m + '.0 <' + M + '.' + (+m + 1) + '.0'
-    }
-
-    debug('xRange return', ret)
-
-    return ret
-  })
-}
-
-// Because * is AND-ed with everything else in the comparator,
-// and '' means "any version", just remove the *s entirely.
-function replaceStars (comp, options) {
-  debug('replaceStars', comp, options)
-  // Looseness is ignored here.  star is always as loose as it gets!
-  return comp.trim().replace(re[STAR], '')
-}
-
-// This function is passed to string.replace(re[HYPHENRANGE])
-// M, m, patch, prerelease, build
-// 1.2 - 3.4.5 => >=1.2.0 <=3.4.5
-// 1.2.3 - 3.4 => >=1.2.0 <3.5.0 Any 3.4.x will do
-// 1.2 - 3.4 => >=1.2.0 <3.5.0
-function hyphenReplace ($0,
-  from, fM, fm, fp, fpr, fb,
-  to, tM, tm, tp, tpr, tb) {
-  if (isX(fM)) {
-    from = ''
-  } else if (isX(fm)) {
-    from = '>=' + fM + '.0.0'
-  } else if (isX(fp)) {
-    from = '>=' + fM + '.' + fm + '.0'
-  } else {
-    from = '>=' + from
-  }
-
-  if (isX(tM)) {
-    to = ''
-  } else if (isX(tm)) {
-    to = '<' + (+tM + 1) + '.0.0'
-  } else if (isX(tp)) {
-    to = '<' + tM + '.' + (+tm + 1) + '.0'
-  } else if (tpr) {
-    to = '<=' + tM + '.' + tm + '.' + tp + '-' + tpr
-  } else {
-    to = '<=' + to
-  }
-
-  return (from + ' ' + to).trim()
-}
-
-// if ANY of the sets match ALL of its comparators, then pass
-Range.prototype.test = function (version) {
-  if (!version) {
-    return false
-  }
-
-  if (typeof version === 'string') {
-    version = new SemVer(version, this.options)
-  }
-
-  for (var i = 0; i < this.set.length; i++) {
-    if (testSet(this.set[i], version, this.options)) {
-      return true
-    }
-  }
-  return false
-}
-
-function testSet (set, version, options) {
-  for (var i = 0; i < set.length; i++) {
-    if (!set[i].test(version)) {
-      return false
-    }
-  }
-
-  if (version.prerelease.length && !options.includePrerelease) {
-    // Find the set of versions that are allowed to have prereleases
-    // For example, ^1.2.3-pr.1 desugars to >=1.2.3-pr.1 <2.0.0
-    // That should allow `1.2.3-pr.2` to pass.
-    // However, `1.2.4-alpha.notready` should NOT be allowed,
-    // even though it's within the range set by the comparators.
-    for (i = 0; i < set.length; i++) {
-      debug(set[i].semver)
-      if (set[i].semver === ANY) {
-        continue
-      }
-
-      if (set[i].semver.prerelease.length > 0) {
-        var allowed = set[i].semver
-        if (allowed.major === version.major &&
-            allowed.minor === version.minor &&
-            allowed.patch === version.patch) {
-          return true
-        }
-      }
-    }
-
-    // Version has a -pre, but it's not one of the ones we like.
-    return false
-  }
-
-  return true
-}
-
-exports.satisfies = satisfies
-function satisfies (version, range, options) {
-  try {
-    range = new Range(range, options)
-  } catch (er) {
-    return false
-  }
-  return range.test(version)
-}
-
-exports.maxSatisfying = maxSatisfying
-function maxSatisfying (versions, range, options) {
-  var max = null
-  var maxSV = null
-  try {
-    var rangeObj = new Range(range, options)
-  } catch (er) {
-    return null
-  }
-  versions.forEach(function (v) {
-    if (rangeObj.test(v)) {
-      // satisfies(v, range, options)
-      if (!max || maxSV.compare(v) === -1) {
-        // compare(max, v, true)
-        max = v
-        maxSV = new SemVer(max, options)
-      }
-    }
-  })
-  return max
-}
-
-exports.minSatisfying = minSatisfying
-function minSatisfying (versions, range, options) {
-  var min = null
-  var minSV = null
-  try {
-    var rangeObj = new Range(range, options)
-  } catch (er) {
-    return null
-  }
-  versions.forEach(function (v) {
-    if (rangeObj.test(v)) {
-      // satisfies(v, range, options)
-      if (!min || minSV.compare(v) === 1) {
-        // compare(min, v, true)
-        min = v
-        minSV = new SemVer(min, options)
-      }
-    }
-  })
-  return min
-}
-
-exports.minVersion = minVersion
-function minVersion (range, loose) {
-  range = new Range(range, loose)
-
-  var minver = new SemVer('0.0.0')
-  if (range.test(minver)) {
-    return minver
-  }
-
-  minver = new SemVer('0.0.0-0')
-  if (range.test(minver)) {
-    return minver
-  }
-
-  minver = null
-  for (var i = 0; i < range.set.length; ++i) {
-    var comparators = range.set[i]
-
-    comparators.forEach(function (comparator) {
-      // Clone to avoid manipulating the comparator's semver object.
-      var compver = new SemVer(comparator.semver.version)
-      switch (comparator.operator) {
-        case '>':
-          if (compver.prerelease.length === 0) {
-            compver.patch++
-          } else {
-            compver.prerelease.push(0)
-          }
-          compver.raw = compver.format()
-          /* fallthrough */
-        case '':
-        case '>=':
-          if (!minver || gt(minver, compver)) {
-            minver = compver
-          }
-          break
-        case '<':
-        case '<=':
-          /* Ignore maximum versions */
-          break
-        /* istanbul ignore next */
-        default:
-          throw new Error('Unexpected operation: ' + comparator.operator)
-      }
-    })
-  }
-
-  if (minver && range.test(minver)) {
-    return minver
-  }
-
-  return null
-}
-
-exports.validRange = validRange
-function validRange (range, options) {
-  try {
-    // Return '*' instead of '' so that truthiness works.
-    // This will throw if it's invalid anyway
-    return new Range(range, options).range || '*'
-  } catch (er) {
-    return null
-  }
-}
-
-// Determine if version is less than all the versions possible in the range
-exports.ltr = ltr
-function ltr (version, range, options) {
-  return outside(version, range, '<', options)
-}
-
-// Determine if version is greater than all the versions possible in the range.
-exports.gtr = gtr
-function gtr (version, range, options) {
-  return outside(version, range, '>', options)
-}
-
-exports.outside = outside
-function outside (version, range, hilo, options) {
-  version = new SemVer(version, options)
-  range = new Range(range, options)
-
-  var gtfn, ltefn, ltfn, comp, ecomp
-  switch (hilo) {
-    case '>':
-      gtfn = gt
-      ltefn = lte
-      ltfn = lt
-      comp = '>'
-      ecomp = '>='
-      break
-    case '<':
-      gtfn = lt
-      ltefn = gte
-      ltfn = gt
-      comp = '<'
-      ecomp = '<='
-      break
-    default:
-      throw new TypeError('Must provide a hilo val of "<" or ">"')
-  }
-
-  // If it satisifes the range it is not outside
-  if (satisfies(version, range, options)) {
-    return false
-  }
-
-  // From now on, variable terms are as if we're in "gtr" mode.
-  // but note that everything is flipped for the "ltr" function.
-
-  for (var i = 0; i < range.set.length; ++i) {
-    var comparators = range.set[i]
-
-    var high = null
-    var low = null
-
-    comparators.forEach(function (comparator) {
-      if (comparator.semver === ANY) {
-        comparator = new Comparator('>=0.0.0')
-      }
-      high = high || comparator
-      low = low || comparator
-      if (gtfn(comparator.semver, high.semver, options)) {
-        high = comparator
-      } else if (ltfn(comparator.semver, low.semver, options)) {
-        low = comparator
-      }
-    })
-
-    // If the edge version comparator has a operator then our version
-    // isn't outside it
-    if (high.operator === comp || high.operator === ecomp) {
-      return false
-    }
-
-    // If the lowest version comparator has an operator and our version
-    // is less than it then it isn't higher than the range
-    if ((!low.operator || low.operator === comp) &&
-        ltefn(version, low.semver)) {
-      return false
-    } else if (low.operator === ecomp && ltfn(version, low.semver)) {
-      return false
-    }
-  }
-  return true
-}
-
-exports.prerelease = prerelease
-function prerelease (version, options) {
-  var parsed = parse(version, options)
-  return (parsed && parsed.prerelease.length) ? parsed.prerelease : null
-}
-
-exports.intersects = intersects
-function intersects (r1, r2, options) {
-  r1 = new Range(r1, options)
-  r2 = new Range(r2, options)
-  return r1.intersects(r2)
-}
-
-exports.coerce = coerce
-function coerce (version) {
-  if (version instanceof SemVer) {
-    return version
-  }
-
-  if (typeof version !== 'string') {
-    return null
-  }
-
-  var match = version.match(re[COERCE])
-
-  if (match == null) {
-    return null
-  }
-
-  return parse(match[1] +
-    '.' + (match[2] || '0') +
-    '.' + (match[3] || '0'))
-}
-
-
-/***/ }),
+/* 48 */,
 /* 49 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
@@ -3808,480 +1142,7 @@ function mix(from, into) {
 /* 71 */,
 /* 72 */,
 /* 73 */,
-/* 74 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-"use strict";
-
-
-const util = __webpack_require__(669);
-const braces = __webpack_require__(783);
-const picomatch = __webpack_require__(827);
-const utils = __webpack_require__(224);
-const isEmptyString = val => typeof val === 'string' && (val === '' || val === './');
-
-/**
- * Returns an array of strings that match one or more glob patterns.
- *
- * ```js
- * const mm = require('micromatch');
- * // mm(list, patterns[, options]);
- *
- * console.log(mm(['a.js', 'a.txt'], ['*.js']));
- * //=> [ 'a.js' ]
- * ```
- * @param {String|Array<string>} list List of strings to match.
- * @param {String|Array<string>} patterns One or more glob patterns to use for matching.
- * @param {Object} options See available [options](#options)
- * @return {Array} Returns an array of matches
- * @summary false
- * @api public
- */
-
-const micromatch = (list, patterns, options) => {
-  patterns = [].concat(patterns);
-  list = [].concat(list);
-
-  let omit = new Set();
-  let keep = new Set();
-  let items = new Set();
-  let negatives = 0;
-
-  let onResult = state => {
-    items.add(state.output);
-    if (options && options.onResult) {
-      options.onResult(state);
-    }
-  };
-
-  for (let i = 0; i < patterns.length; i++) {
-    let isMatch = picomatch(String(patterns[i]), { ...options, onResult }, true);
-    let negated = isMatch.state.negated || isMatch.state.negatedExtglob;
-    if (negated) negatives++;
-
-    for (let item of list) {
-      let matched = isMatch(item, true);
-
-      let match = negated ? !matched.isMatch : matched.isMatch;
-      if (!match) continue;
-
-      if (negated) {
-        omit.add(matched.output);
-      } else {
-        omit.delete(matched.output);
-        keep.add(matched.output);
-      }
-    }
-  }
-
-  let result = negatives === patterns.length ? [...items] : [...keep];
-  let matches = result.filter(item => !omit.has(item));
-
-  if (options && matches.length === 0) {
-    if (options.failglob === true) {
-      throw new Error(`No matches found for "${patterns.join(', ')}"`);
-    }
-
-    if (options.nonull === true || options.nullglob === true) {
-      return options.unescape ? patterns.map(p => p.replace(/\\/g, '')) : patterns;
-    }
-  }
-
-  return matches;
-};
-
-/**
- * Backwards compatibility
- */
-
-micromatch.match = micromatch;
-
-/**
- * Returns a matcher function from the given glob `pattern` and `options`.
- * The returned function takes a string to match as its only argument and returns
- * true if the string is a match.
- *
- * ```js
- * const mm = require('micromatch');
- * // mm.matcher(pattern[, options]);
- *
- * const isMatch = mm.matcher('*.!(*a)');
- * console.log(isMatch('a.a')); //=> false
- * console.log(isMatch('a.b')); //=> true
- * ```
- * @param {String} `pattern` Glob pattern
- * @param {Object} `options`
- * @return {Function} Returns a matcher function.
- * @api public
- */
-
-micromatch.matcher = (pattern, options) => picomatch(pattern, options);
-
-/**
- * Returns true if **any** of the given glob `patterns` match the specified `string`.
- *
- * ```js
- * const mm = require('micromatch');
- * // mm.isMatch(string, patterns[, options]);
- *
- * console.log(mm.isMatch('a.a', ['b.*', '*.a'])); //=> true
- * console.log(mm.isMatch('a.a', 'b.*')); //=> false
- * ```
- * @param {String} str The string to test.
- * @param {String|Array} patterns One or more glob patterns to use for matching.
- * @param {Object} [options] See available [options](#options).
- * @return {Boolean} Returns true if any patterns match `str`
- * @api public
- */
-
-micromatch.isMatch = (str, patterns, options) => picomatch(patterns, options)(str);
-
-/**
- * Backwards compatibility
- */
-
-micromatch.any = micromatch.isMatch;
-
-/**
- * Returns a list of strings that _**do not match any**_ of the given `patterns`.
- *
- * ```js
- * const mm = require('micromatch');
- * // mm.not(list, patterns[, options]);
- *
- * console.log(mm.not(['a.a', 'b.b', 'c.c'], '*.a'));
- * //=> ['b.b', 'c.c']
- * ```
- * @param {Array} `list` Array of strings to match.
- * @param {String|Array} `patterns` One or more glob pattern to use for matching.
- * @param {Object} `options` See available [options](#options) for changing how matches are performed
- * @return {Array} Returns an array of strings that **do not match** the given patterns.
- * @api public
- */
-
-micromatch.not = (list, patterns, options = {}) => {
-  patterns = [].concat(patterns).map(String);
-  let result = new Set();
-  let items = [];
-
-  let onResult = state => {
-    if (options.onResult) options.onResult(state);
-    items.push(state.output);
-  };
-
-  let matches = micromatch(list, patterns, { ...options, onResult });
-
-  for (let item of items) {
-    if (!matches.includes(item)) {
-      result.add(item);
-    }
-  }
-  return [...result];
-};
-
-/**
- * Returns true if the given `string` contains the given pattern. Similar
- * to [.isMatch](#isMatch) but the pattern can match any part of the string.
- *
- * ```js
- * var mm = require('micromatch');
- * // mm.contains(string, pattern[, options]);
- *
- * console.log(mm.contains('aa/bb/cc', '*b'));
- * //=> true
- * console.log(mm.contains('aa/bb/cc', '*d'));
- * //=> false
- * ```
- * @param {String} `str` The string to match.
- * @param {String|Array} `patterns` Glob pattern to use for matching.
- * @param {Object} `options` See available [options](#options) for changing how matches are performed
- * @return {Boolean} Returns true if the patter matches any part of `str`.
- * @api public
- */
-
-micromatch.contains = (str, pattern, options) => {
-  if (typeof str !== 'string') {
-    throw new TypeError(`Expected a string: "${util.inspect(str)}"`);
-  }
-
-  if (Array.isArray(pattern)) {
-    return pattern.some(p => micromatch.contains(str, p, options));
-  }
-
-  if (typeof pattern === 'string') {
-    if (isEmptyString(str) || isEmptyString(pattern)) {
-      return false;
-    }
-
-    if (str.includes(pattern) || (str.startsWith('./') && str.slice(2).includes(pattern))) {
-      return true;
-    }
-  }
-
-  return micromatch.isMatch(str, pattern, { ...options, contains: true });
-};
-
-/**
- * Filter the keys of the given object with the given `glob` pattern
- * and `options`. Does not attempt to match nested keys. If you need this feature,
- * use [glob-object][] instead.
- *
- * ```js
- * const mm = require('micromatch');
- * // mm.matchKeys(object, patterns[, options]);
- *
- * const obj = { aa: 'a', ab: 'b', ac: 'c' };
- * console.log(mm.matchKeys(obj, '*b'));
- * //=> { ab: 'b' }
- * ```
- * @param {Object} `object` The object with keys to filter.
- * @param {String|Array} `patterns` One or more glob patterns to use for matching.
- * @param {Object} `options` See available [options](#options) for changing how matches are performed
- * @return {Object} Returns an object with only keys that match the given patterns.
- * @api public
- */
-
-micromatch.matchKeys = (obj, patterns, options) => {
-  if (!utils.isObject(obj)) {
-    throw new TypeError('Expected the first argument to be an object');
-  }
-  let keys = micromatch(Object.keys(obj), patterns, options);
-  let res = {};
-  for (let key of keys) res[key] = obj[key];
-  return res;
-};
-
-/**
- * Returns true if some of the strings in the given `list` match any of the given glob `patterns`.
- *
- * ```js
- * const mm = require('micromatch');
- * // mm.some(list, patterns[, options]);
- *
- * console.log(mm.some(['foo.js', 'bar.js'], ['*.js', '!foo.js']));
- * // true
- * console.log(mm.some(['foo.js'], ['*.js', '!foo.js']));
- * // false
- * ```
- * @param {String|Array} `list` The string or array of strings to test. Returns as soon as the first match is found.
- * @param {String|Array} `patterns` One or more glob patterns to use for matching.
- * @param {Object} `options` See available [options](#options) for changing how matches are performed
- * @return {Boolean} Returns true if any patterns match `str`
- * @api public
- */
-
-micromatch.some = (list, patterns, options) => {
-  let items = [].concat(list);
-
-  for (let pattern of [].concat(patterns)) {
-    let isMatch = picomatch(String(pattern), options);
-    if (items.some(item => isMatch(item))) {
-      return true;
-    }
-  }
-  return false;
-};
-
-/**
- * Returns true if every string in the given `list` matches
- * any of the given glob `patterns`.
- *
- * ```js
- * const mm = require('micromatch');
- * // mm.every(list, patterns[, options]);
- *
- * console.log(mm.every('foo.js', ['foo.js']));
- * // true
- * console.log(mm.every(['foo.js', 'bar.js'], ['*.js']));
- * // true
- * console.log(mm.every(['foo.js', 'bar.js'], ['*.js', '!foo.js']));
- * // false
- * console.log(mm.every(['foo.js'], ['*.js', '!foo.js']));
- * // false
- * ```
- * @param {String|Array} `list` The string or array of strings to test.
- * @param {String|Array} `patterns` One or more glob patterns to use for matching.
- * @param {Object} `options` See available [options](#options) for changing how matches are performed
- * @return {Boolean} Returns true if any patterns match `str`
- * @api public
- */
-
-micromatch.every = (list, patterns, options) => {
-  let items = [].concat(list);
-
-  for (let pattern of [].concat(patterns)) {
-    let isMatch = picomatch(String(pattern), options);
-    if (!items.every(item => isMatch(item))) {
-      return false;
-    }
-  }
-  return true;
-};
-
-/**
- * Returns true if **all** of the given `patterns` match
- * the specified string.
- *
- * ```js
- * const mm = require('micromatch');
- * // mm.all(string, patterns[, options]);
- *
- * console.log(mm.all('foo.js', ['foo.js']));
- * // true
- *
- * console.log(mm.all('foo.js', ['*.js', '!foo.js']));
- * // false
- *
- * console.log(mm.all('foo.js', ['*.js', 'foo.js']));
- * // true
- *
- * console.log(mm.all('foo.js', ['*.js', 'f*', '*o*', '*o.js']));
- * // true
- * ```
- * @param {String|Array} `str` The string to test.
- * @param {String|Array} `patterns` One or more glob patterns to use for matching.
- * @param {Object} `options` See available [options](#options) for changing how matches are performed
- * @return {Boolean} Returns true if any patterns match `str`
- * @api public
- */
-
-micromatch.all = (str, patterns, options) => {
-  if (typeof str !== 'string') {
-    throw new TypeError(`Expected a string: "${util.inspect(str)}"`);
-  }
-
-  return [].concat(patterns).every(p => picomatch(p, options)(str));
-};
-
-/**
- * Returns an array of matches captured by `pattern` in `string, or `null` if the pattern did not match.
- *
- * ```js
- * const mm = require('micromatch');
- * // mm.capture(pattern, string[, options]);
- *
- * console.log(mm.capture('test/*.js', 'test/foo.js'));
- * //=> ['foo']
- * console.log(mm.capture('test/*.js', 'foo/bar.css'));
- * //=> null
- * ```
- * @param {String} `glob` Glob pattern to use for matching.
- * @param {String} `input` String to match
- * @param {Object} `options` See available [options](#options) for changing how matches are performed
- * @return {Boolean} Returns an array of captures if the input matches the glob pattern, otherwise `null`.
- * @api public
- */
-
-micromatch.capture = (glob, input, options) => {
-  let posix = utils.isWindows(options);
-  let regex = picomatch.makeRe(String(glob), { ...options, capture: true });
-  let match = regex.exec(posix ? utils.toPosixSlashes(input) : input);
-
-  if (match) {
-    return match.slice(1).map(v => v === void 0 ? '' : v);
-  }
-};
-
-/**
- * Create a regular expression from the given glob `pattern`.
- *
- * ```js
- * const mm = require('micromatch');
- * // mm.makeRe(pattern[, options]);
- *
- * console.log(mm.makeRe('*.js'));
- * //=> /^(?:(\.[\\\/])?(?!\.)(?=.)[^\/]*?\.js)$/
- * ```
- * @param {String} `pattern` A glob pattern to convert to regex.
- * @param {Object} `options`
- * @return {RegExp} Returns a regex created from the given pattern.
- * @api public
- */
-
-micromatch.makeRe = (...args) => picomatch.makeRe(...args);
-
-/**
- * Scan a glob pattern to separate the pattern into segments. Used
- * by the [split](#split) method.
- *
- * ```js
- * const mm = require('micromatch');
- * const state = mm.scan(pattern[, options]);
- * ```
- * @param {String} `pattern`
- * @param {Object} `options`
- * @return {Object} Returns an object with
- * @api public
- */
-
-micromatch.scan = (...args) => picomatch.scan(...args);
-
-/**
- * Parse a glob pattern to create the source string for a regular
- * expression.
- *
- * ```js
- * const mm = require('micromatch');
- * const state = mm(pattern[, options]);
- * ```
- * @param {String} `glob`
- * @param {Object} `options`
- * @return {Object} Returns an object with useful properties and output to be used as regex source string.
- * @api public
- */
-
-micromatch.parse = (patterns, options) => {
-  let res = [];
-  for (let pattern of [].concat(patterns || [])) {
-    for (let str of braces(String(pattern), options)) {
-      res.push(picomatch.parse(str, options));
-    }
-  }
-  return res;
-};
-
-/**
- * Process the given brace `pattern`.
- *
- * ```js
- * const { braces } = require('micromatch');
- * console.log(braces('foo/{a,b,c}/bar'));
- * //=> [ 'foo/(a|b|c)/bar' ]
- *
- * console.log(braces('foo/{a,b,c}/bar', { expand: true }));
- * //=> [ 'foo/a/bar', 'foo/b/bar', 'foo/c/bar' ]
- * ```
- * @param {String} `pattern` String with brace pattern to process.
- * @param {Object} `options` Any [options](#options) to change how expansion is performed. See the [braces][] library for all available options.
- * @return {Array}
- * @api public
- */
-
-micromatch.braces = (pattern, options) => {
-  if (typeof pattern !== 'string') throw new TypeError('Expected a string');
-  if ((options && options.nobrace === true) || !/\{.*\}/.test(pattern)) {
-    return [pattern];
-  }
-  return braces(pattern, options);
-};
-
-/**
- * Expand braces
- */
-
-micromatch.braceExpand = (pattern, options) => {
-  if (typeof pattern !== 'string') throw new TypeError('Expected a string');
-  return micromatch.braces(pattern, { ...options, expand: true });
-};
-
-/**
- * Expose micromatch
- */
-
-module.exports = micromatch;
-
-
-/***/ }),
+/* 74 */,
 /* 75 */
 /***/ (function(__unusedmodule, exports, __webpack_require__) {
 
@@ -4501,7 +1362,7 @@ try {
 } catch (er) {}
 
 var GLOBSTAR = minimatch.GLOBSTAR = Minimatch.GLOBSTAR = {}
-var expand = __webpack_require__(306)
+var expand = __webpack_require__(95)
 
 var plTypes = {
   '!': { open: '(?:(?!(?:', close: '))[^/]*?)'},
@@ -5419,7 +2280,213 @@ function regExpEscape (s) {
 
 /***/ }),
 /* 94 */,
-/* 95 */,
+/* 95 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+var concatMap = __webpack_require__(458);
+var balanced = __webpack_require__(284);
+
+module.exports = expandTop;
+
+var escSlash = '\0SLASH'+Math.random()+'\0';
+var escOpen = '\0OPEN'+Math.random()+'\0';
+var escClose = '\0CLOSE'+Math.random()+'\0';
+var escComma = '\0COMMA'+Math.random()+'\0';
+var escPeriod = '\0PERIOD'+Math.random()+'\0';
+
+function numeric(str) {
+  return parseInt(str, 10) == str
+    ? parseInt(str, 10)
+    : str.charCodeAt(0);
+}
+
+function escapeBraces(str) {
+  return str.split('\\\\').join(escSlash)
+            .split('\\{').join(escOpen)
+            .split('\\}').join(escClose)
+            .split('\\,').join(escComma)
+            .split('\\.').join(escPeriod);
+}
+
+function unescapeBraces(str) {
+  return str.split(escSlash).join('\\')
+            .split(escOpen).join('{')
+            .split(escClose).join('}')
+            .split(escComma).join(',')
+            .split(escPeriod).join('.');
+}
+
+
+// Basically just str.split(","), but handling cases
+// where we have nested braced sections, which should be
+// treated as individual members, like {a,{b,c},d}
+function parseCommaParts(str) {
+  if (!str)
+    return [''];
+
+  var parts = [];
+  var m = balanced('{', '}', str);
+
+  if (!m)
+    return str.split(',');
+
+  var pre = m.pre;
+  var body = m.body;
+  var post = m.post;
+  var p = pre.split(',');
+
+  p[p.length-1] += '{' + body + '}';
+  var postParts = parseCommaParts(post);
+  if (post.length) {
+    p[p.length-1] += postParts.shift();
+    p.push.apply(p, postParts);
+  }
+
+  parts.push.apply(parts, p);
+
+  return parts;
+}
+
+function expandTop(str) {
+  if (!str)
+    return [];
+
+  // I don't know why Bash 4.3 does this, but it does.
+  // Anything starting with {} will have the first two bytes preserved
+  // but *only* at the top level, so {},a}b will not expand to anything,
+  // but a{},b}c will be expanded to [a}c,abc].
+  // One could argue that this is a bug in Bash, but since the goal of
+  // this module is to match Bash's rules, we escape a leading {}
+  if (str.substr(0, 2) === '{}') {
+    str = '\\{\\}' + str.substr(2);
+  }
+
+  return expand(escapeBraces(str), true).map(unescapeBraces);
+}
+
+function identity(e) {
+  return e;
+}
+
+function embrace(str) {
+  return '{' + str + '}';
+}
+function isPadded(el) {
+  return /^-?0\d/.test(el);
+}
+
+function lte(i, y) {
+  return i <= y;
+}
+function gte(i, y) {
+  return i >= y;
+}
+
+function expand(str, isTop) {
+  var expansions = [];
+
+  var m = balanced('{', '}', str);
+  if (!m || /\$$/.test(m.pre)) return [str];
+
+  var isNumericSequence = /^-?\d+\.\.-?\d+(?:\.\.-?\d+)?$/.test(m.body);
+  var isAlphaSequence = /^[a-zA-Z]\.\.[a-zA-Z](?:\.\.-?\d+)?$/.test(m.body);
+  var isSequence = isNumericSequence || isAlphaSequence;
+  var isOptions = m.body.indexOf(',') >= 0;
+  if (!isSequence && !isOptions) {
+    // {a},b}
+    if (m.post.match(/,.*\}/)) {
+      str = m.pre + '{' + m.body + escClose + m.post;
+      return expand(str);
+    }
+    return [str];
+  }
+
+  var n;
+  if (isSequence) {
+    n = m.body.split(/\.\./);
+  } else {
+    n = parseCommaParts(m.body);
+    if (n.length === 1) {
+      // x{{a,b}}y ==> x{a}y x{b}y
+      n = expand(n[0], false).map(embrace);
+      if (n.length === 1) {
+        var post = m.post.length
+          ? expand(m.post, false)
+          : [''];
+        return post.map(function(p) {
+          return m.pre + n[0] + p;
+        });
+      }
+    }
+  }
+
+  // at this point, n is the parts, and we know it's not a comma set
+  // with a single entry.
+
+  // no need to expand pre, since it is guaranteed to be free of brace-sets
+  var pre = m.pre;
+  var post = m.post.length
+    ? expand(m.post, false)
+    : [''];
+
+  var N;
+
+  if (isSequence) {
+    var x = numeric(n[0]);
+    var y = numeric(n[1]);
+    var width = Math.max(n[0].length, n[1].length)
+    var incr = n.length == 3
+      ? Math.abs(numeric(n[2]))
+      : 1;
+    var test = lte;
+    var reverse = y < x;
+    if (reverse) {
+      incr *= -1;
+      test = gte;
+    }
+    var pad = n.some(isPadded);
+
+    N = [];
+
+    for (var i = x; test(i, y); i += incr) {
+      var c;
+      if (isAlphaSequence) {
+        c = String.fromCharCode(i);
+        if (c === '\\')
+          c = '';
+      } else {
+        c = String(i);
+        if (pad) {
+          var need = width - c.length;
+          if (need > 0) {
+            var z = new Array(need + 1).join('0');
+            if (i < 0)
+              c = '-' + z + c.slice(1);
+            else
+              c = z + c;
+          }
+        }
+      }
+      N.push(c);
+    }
+  } else {
+    N = concatMap(n, function(el) { return expand(el, false) });
+  }
+
+  for (var j = 0; j < N.length; j++) {
+    for (var k = 0; k < post.length; k++) {
+      var expansion = pre + N[j] + post[k];
+      if (!isTop || isSequence || expansion)
+        expansions.push(expansion);
+    }
+  }
+
+  return expansions;
+}
+
+
+
+/***/ }),
 /* 96 */,
 /* 97 */,
 /* 98 */
@@ -5554,26 +2621,24 @@ module.exports = _which;
 /* 104 */
 /***/ (function(__unusedmodule, __unusedexports, __webpack_require__) {
 
-const path = __webpack_require__(622)
 const fs = __webpack_require__(747)
-
+const path = __webpack_require__(622)
 const core = __webpack_require__(470)
 const github = __webpack_require__(469)
-
+const fg = __webpack_require__(406)
 const git = __webpack_require__(956)
 const http = __webpack_require__(369)
 const shell = __webpack_require__(739)
-const fg = __webpack_require__(406)
 
 // workaround to allow NCC to bundle these dynamically loaded modules
-__webpack_require__(833)
+__webpack_require__(771)
 __webpack_require__(272)
 __webpack_require__(659)
 __webpack_require__(757)
 __webpack_require__(167)
 __webpack_require__(705)
 __webpack_require__(722)
-__webpack_require__(661)
+__webpack_require__(762)
 __webpack_require__(380)
 __webpack_require__(580)
 
@@ -5609,6 +2674,48 @@ const gitStatusToString = (headStatus, stageStatus) => {
             return 'UNKNOWN'
     }
 }
+
+const getWorkspacePackages = (workspaces, rootCwd) => {
+    if (!workspaces) {
+        return []
+    }
+
+    core.info(`found workspaces: ${workspaces}`)
+
+    const ws = fg.sync(workspaces, {
+        onlyDirectories: true,
+        dot: false,
+        rootCwd,
+    })
+
+    return ws.map((w) => {
+        core.startGroup(`workspace: ${w}`)
+        core.info(`workspace: ${w}`)
+        const ws_cwd = path.join(rootCwd, w)
+        core.info(`ws cwd: ${ws_cwd}`)
+
+        const [ws_pkg_path] = fg.sync(['package.json'], {
+            cwd: ws_cwd,
+            onlyFiles: true,
+            absolute: true,
+            dot: false,
+        })
+
+        core.info(`ws pkg path: ${ws_pkg_path}`)
+
+        const ws_pkg = JSON.parse(shell.cat(ws_pkg_path))
+
+        core.info(JSON.stringify(ws_pkg, undefined, 2))
+
+        core.endGroup()
+
+        return {
+            cwd: ws_cwd,
+            pkg: ws_pkg,
+        }
+    })
+}
+
 async function gitListStagedStatuses({ fs, dir, filepath }) {
     const statuses = (
         await git.statusMatrix({
@@ -5625,13 +2732,92 @@ async function gitListStagedStatuses({ fs, dir, filepath }) {
     core.endGroup()
 }
 
-try {
-    const payload = JSON.stringify(github.context.payload, undefined, 2)
-    core.debug(`The event payload: ${payload}`)
+const defaultDeploy = async (
+    workspacePackages,
+    opts,
+    { rootCwd, rootPkg, rootTargetRepoName }
+) => {
+    if (workspacePackages.length) {
+        await Promise.all(
+            workspacePackages.map(async ({ cwd, pkg }) => {
+                try {
+                    await deployRepo({
+                        ...opts,
+                        repo: cwd,
+                        base: path.basename(cwd),
+                        pkg,
+                        build_repo: null,
+                    })
+                } catch (e) {
+                    core.setFailed(e.message)
+                }
+            })
+        )
+    } else {
+        await deployRepo({
+            ...opts,
+            repo: rootCwd,
+            base: path.basename(rootCwd),
+            pkg: rootPkg,
+            build_repo: rootTargetRepoName,
+        })
+    }
+}
 
-    main()
-} catch (error) {
-    core.setFailed(error.message)
+const customDeploy = async (
+    workspacePackages,
+    opts,
+    { rootCwd, rootPkg, rootTargetRepoName, packages_to_deploy }
+) => {
+    const packages = [
+        ...workspacePackages,
+        {
+            cwd: rootCwd,
+            pkg: rootPkg,
+            rootTargetRepoName,
+        },
+    ]
+
+    const packagesToDeploy = packages_to_deploy
+        .split(' ')
+        .map((entry) =>
+            entry
+                .split(':')
+                .reduce(
+                    (acc, value, index) =>
+                        index === 0
+                            ? { name: value }
+                            : { ...acc, buildDir: value },
+                    {}
+                )
+        )
+
+    core.info(JSON.stringify(packagesToDeploy))
+
+    await Promise.all(
+        packagesToDeploy.reduce((promises, { name, buildDir }) => {
+            const packageInfo = packages.find(({ pkg }) => pkg.name === name)
+
+            if (!packageInfo) {
+                core.warning(`Package ${name} was not found`)
+                return promises
+            }
+
+            core.info(`Deploying package ${name}`)
+
+            return [
+                ...promises,
+                deployRepo({
+                    ...opts,
+                    repo: packageInfo.cwd,
+                    base: path.basename(packageInfo.cwd),
+                    pkg: packageInfo.pkg,
+                    build_dir: buildDir == null ? opts.build_dir : buildDir,
+                    build_repo: rootTargetRepoName,
+                }).catch((e) => core.setFailed(e.message)),
+            ]
+        }, [])
+    )
 }
 
 async function main() {
@@ -5646,82 +2832,49 @@ async function main() {
     const gh_org = core.getInput('github-org')
     const gh_usr = core.getInput('github-user')
     const build_repo = core.getInput('repo-name')
+    const packages_to_deploy = core.getInput('packages')
 
     const opts = {
         build_dir,
-        cwd,
         gh_token,
         gh_org,
         gh_usr,
-        build_repo,
     }
 
     core.startGroup('Options for run:')
-    core.info(`${JSON.stringify(opts, undefined, 2)}`)
+    core.info(
+        `${JSON.stringify(
+            { ...opts, cwd, build_repo, packages_to_deploy },
+            undefined,
+            2
+        )}`
+    )
     core.endGroup()
 
     const pkg_path = path.join(cwd, 'package.json')
     const pkg = JSON.parse(shell.cat(pkg_path))
 
-    core.startGroup('Loaded package')
+    core.startGroup('Loaded root package')
     core.info(`pkg ls: ${shell.ls(cwd)}`)
     core.info(`pkg path: ${pkg_path}`)
     core.info(JSON.stringify(pkg, undefined, 2))
     core.endGroup()
 
     try {
-        if (pkg.workspaces) {
-            core.info(`found workspaces: ${pkg.workspaces}`)
+        const workspacePackages = getWorkspacePackages(pkg.workspaces, cwd)
 
-            const ws = fg.sync(pkg.workspaces, {
-                onlyDirectories: true,
-                dot: false,
-                cwd,
+        if (!packages_to_deploy) {
+            await defaultDeploy(workspacePackages, opts, {
+                rootCwd: cwd,
+                rootPkg: pkg,
+                rootTargetRepoName: build_repo,
             })
-
-            core.info(`workspaces: ${ws}`)
-
-            Promise.all(
-                ws.map(async w => {
-                    core.info(`workspace: ${w}`)
-                    const ws_cwd = path.join(cwd, w)
-                    core.info(`ws cwd: ${ws_cwd}`)
-
-                    const [ws_pkg_path] = fg.sync(['package.json'], {
-                        cwd: ws_cwd,
-                        onlyFiles: true,
-                        absolute: true,
-                        dot: false,
-                    })
-
-                    core.info(`ws pkg path: ${ws_pkg_path}`)
-
-                    const ws_pkg = JSON.parse(shell.cat(ws_pkg_path))
-
-                    core.startGroup('Loaded WS package')
-                    core.info(`path: ${ws_pkg_path}`)
-                    core.info(JSON.stringify(ws_pkg, undefined, 2))
-                    core.endGroup()
-
-                    try {
-                        await deployRepo({
-                            ...opts,
-                            repo: ws_cwd,
-                            base: path.basename(ws_cwd),
-                            pkg: ws_pkg,
-                            build_repo: null,
-                        })
-                    } catch (e) {
-                        core.setFailed(e.message)
-                    }
-                })
-            )
         } else {
-            await deployRepo({
-                ...opts,
-                repo: cwd,
-                base: path.basename(cwd),
-                pkg,
+            await customDeploy(workspacePackages, opts, {
+                rootCwd: cwd,
+                rootPkg: pkg,
+                rootTargetRepoName: build_repo,
+                packages_to_deploy,
             })
         }
     } catch (error) {
@@ -5730,16 +2883,12 @@ async function main() {
 }
 
 async function deployRepo(opts) {
-    const {
-        base,
-        repo,
-        gh_org,
-        gh_usr,
-        gh_token,
-        build_dir,
-        pkg,
-        build_repo,
-    } = opts
+    const { base, repo, gh_org, gh_usr, gh_token, build_dir, pkg, build_repo } =
+        opts
+
+    core.info(
+        `base: ${base} repo: ${repo} build_dir: ${build_dir} pkg: ${pkg} build_repo: ${build_repo}`
+    )
 
     const context = github.context
     const octokit = new github.GitHub(gh_token)
@@ -5777,7 +2926,7 @@ async function deployRepo(opts) {
     const ghRoot = gh_usr ? gh_usr : gh_org
 
     // drop the scope from e.g. @dhis2/foobar to foobar
-    const strip = name => path.basename(name)
+    const strip = (name) => path.basename(name)
 
     const repo_name = strip(build_repo ? build_repo : pkg.name)
 
@@ -5785,12 +2934,11 @@ async function deployRepo(opts) {
 
     try {
         if (gh_usr) {
-            const create_user_repo = await octokit.repos.createForAuthenticatedUser(
-                {
+            const create_user_repo =
+                await octokit.repos.createForAuthenticatedUser({
                     name: repo_name,
                     auto_init: true,
-                }
-            )
+                })
             core.info(`create user repo: ${create_user_repo}`)
         } else {
             const create_org_repo = await octokit.repos.createInOrg({
@@ -5906,14 +3054,14 @@ async function deployRepo(opts) {
         const res_find = shell
             .ls(repo)
             .filter(
-                f =>
+                (f) =>
                     !f.match(/.*tmp.*/) &&
                     !f.match(/.*\.git.*/) &&
                     !f.match(/.*node_modules*/)
             )
 
         core.info(`find: ${res_find}`)
-        res_find.map(f =>
+        res_find.map((f) =>
             shell.cp('-r', path.join(repo, f), artifact_repo_path)
         )
     }
@@ -5979,10 +3127,16 @@ async function format_ref(ref, opts) {
         core.warning('could not expand ref')
     }
 
-    return full_ref
-        .split('/')
-        .slice(2)
-        .join('/')
+    return full_ref.split('/').slice(2).join('/')
+}
+
+try {
+    const payload = JSON.stringify(github.context.payload, undefined, 2)
+    core.debug(`The event payload: ${payload}`)
+
+    main()
+} catch (error) {
+    core.setFailed(error.message)
 }
 
 
@@ -7310,7 +4464,580 @@ module.exports = uniq;
 
 
 /***/ }),
-/* 127 */,
+/* 127 */
+/***/ (function(module) {
+
+// A simple implementation of make-array
+function makeArray (subject) {
+  return Array.isArray(subject)
+    ? subject
+    : [subject]
+}
+
+const REGEX_TEST_BLANK_LINE = /^\s+$/
+const REGEX_REPLACE_LEADING_EXCAPED_EXCLAMATION = /^\\!/
+const REGEX_REPLACE_LEADING_EXCAPED_HASH = /^\\#/
+const REGEX_SPLITALL_CRLF = /\r?\n/g
+// /foo,
+// ./foo,
+// ../foo,
+// .
+// ..
+const REGEX_TEST_INVALID_PATH = /^\.*\/|^\.+$/
+
+const SLASH = '/'
+const KEY_IGNORE = typeof Symbol !== 'undefined'
+  ? Symbol.for('node-ignore')
+  /* istanbul ignore next */
+  : 'node-ignore'
+
+const define = (object, key, value) =>
+  Object.defineProperty(object, key, {value})
+
+const REGEX_REGEXP_RANGE = /([0-z])-([0-z])/g
+
+// Sanitize the range of a regular expression
+// The cases are complicated, see test cases for details
+const sanitizeRange = range => range.replace(
+  REGEX_REGEXP_RANGE,
+  (match, from, to) => from.charCodeAt(0) <= to.charCodeAt(0)
+    ? match
+    // Invalid range (out of order) which is ok for gitignore rules but
+    //   fatal for JavaScript regular expression, so eliminate it.
+    : ''
+)
+
+// > If the pattern ends with a slash,
+// > it is removed for the purpose of the following description,
+// > but it would only find a match with a directory.
+// > In other words, foo/ will match a directory foo and paths underneath it,
+// > but will not match a regular file or a symbolic link foo
+// >  (this is consistent with the way how pathspec works in general in Git).
+// '`foo/`' will not match regular file '`foo`' or symbolic link '`foo`'
+// -> ignore-rules will not deal with it, because it costs extra `fs.stat` call
+//      you could use option `mark: true` with `glob`
+
+// '`foo/`' should not continue with the '`..`'
+const REPLACERS = [
+
+  // > Trailing spaces are ignored unless they are quoted with backslash ("\")
+  [
+    // (a\ ) -> (a )
+    // (a  ) -> (a)
+    // (a \ ) -> (a  )
+    /\\?\s+$/,
+    match => match.indexOf('\\') === 0
+      ? ' '
+      : ''
+  ],
+
+  // replace (\ ) with ' '
+  [
+    /\\\s/g,
+    () => ' '
+  ],
+
+  // Escape metacharacters
+  // which is written down by users but means special for regular expressions.
+
+  // > There are 12 characters with special meanings:
+  // > - the backslash \,
+  // > - the caret ^,
+  // > - the dollar sign $,
+  // > - the period or dot .,
+  // > - the vertical bar or pipe symbol |,
+  // > - the question mark ?,
+  // > - the asterisk or star *,
+  // > - the plus sign +,
+  // > - the opening parenthesis (,
+  // > - the closing parenthesis ),
+  // > - and the opening square bracket [,
+  // > - the opening curly brace {,
+  // > These special characters are often called "metacharacters".
+  [
+    /[\\^$.|*+(){]/g,
+    match => `\\${match}`
+  ],
+
+  [
+    // > [abc] matches any character inside the brackets
+    // >    (in this case a, b, or c);
+    /\[([^\]/]*)($|\])/g,
+    (match, p1, p2) => p2 === ']'
+      ? `[${sanitizeRange(p1)}]`
+      : `\\${match}`
+  ],
+
+  [
+    // > a question mark (?) matches a single character
+    /(?!\\)\?/g,
+    () => '[^/]'
+  ],
+
+  // leading slash
+  [
+
+    // > A leading slash matches the beginning of the pathname.
+    // > For example, "/*.c" matches "cat-file.c" but not "mozilla-sha1/sha1.c".
+    // A leading slash matches the beginning of the pathname
+    /^\//,
+    () => '^'
+  ],
+
+  // replace special metacharacter slash after the leading slash
+  [
+    /\//g,
+    () => '\\/'
+  ],
+
+  [
+    // > A leading "**" followed by a slash means match in all directories.
+    // > For example, "**/foo" matches file or directory "foo" anywhere,
+    // > the same as pattern "foo".
+    // > "**/foo/bar" matches file or directory "bar" anywhere that is directly
+    // >   under directory "foo".
+    // Notice that the '*'s have been replaced as '\\*'
+    /^\^*\\\*\\\*\\\//,
+
+    // '**/foo' <-> 'foo'
+    () => '^(?:.*\\/)?'
+  ],
+
+  // ending
+  [
+    // 'js' will not match 'js.'
+    // 'ab' will not match 'abc'
+    /(?:[^*])$/,
+
+    // WTF!
+    // https://git-scm.com/docs/gitignore
+    // changes in [2.22.1](https://git-scm.com/docs/gitignore/2.22.1)
+    // which re-fixes #24, #38
+
+    // > If there is a separator at the end of the pattern then the pattern
+    // > will only match directories, otherwise the pattern can match both
+    // > files and directories.
+
+    // 'js*' will not match 'a.js'
+    // 'js/' will not match 'a.js'
+    // 'js' will match 'a.js' and 'a.js/'
+    match => /\/$/.test(match)
+      // foo/ will not match 'foo'
+      ? `${match}$`
+      // foo matches 'foo' and 'foo/'
+      : `${match}(?=$|\\/$)`
+  ],
+
+  // starting
+  [
+    // there will be no leading '/'
+    //   (which has been replaced by section "leading slash")
+    // If starts with '**', adding a '^' to the regular expression also works
+    /^(?=[^^])/,
+    function startingReplacer () {
+      // If has a slash `/` at the beginning or middle
+      return !/\/(?!$)/.test(this)
+        // > Prior to 2.22.1
+        // > If the pattern does not contain a slash /,
+        // >   Git treats it as a shell glob pattern
+        // Actually, if there is only a trailing slash,
+        //   git also treats it as a shell glob pattern
+
+        // After 2.22.1 (compatible but clearer)
+        // > If there is a separator at the beginning or middle (or both)
+        // > of the pattern, then the pattern is relative to the directory
+        // > level of the particular .gitignore file itself.
+        // > Otherwise the pattern may also match at any level below
+        // > the .gitignore level.
+        ? '(?:^|\\/)'
+
+        // > Otherwise, Git treats the pattern as a shell glob suitable for
+        // >   consumption by fnmatch(3)
+        : '^'
+    }
+  ],
+
+  // two globstars
+  [
+    // Use lookahead assertions so that we could match more than one `'/**'`
+    /\\\/\\\*\\\*(?=\\\/|$)/g,
+
+    // Zero, one or several directories
+    // should not use '*', or it will be replaced by the next replacer
+
+    // Check if it is not the last `'/**'`
+    (_, index, str) => index + 6 < str.length
+
+      // case: /**/
+      // > A slash followed by two consecutive asterisks then a slash matches
+      // >   zero or more directories.
+      // > For example, "a/**/b" matches "a/b", "a/x/b", "a/x/y/b" and so on.
+      // '/**/'
+      ? '(?:\\/[^\\/]+)*'
+
+      // case: /**
+      // > A trailing `"/**"` matches everything inside.
+
+      // #21: everything inside but it should not include the current folder
+      : '\\/.+'
+  ],
+
+  // intermediate wildcards
+  [
+    // Never replace escaped '*'
+    // ignore rule '\*' will match the path '*'
+
+    // 'abc.*/' -> go
+    // 'abc.*'  -> skip this rule
+    /(^|[^\\]+)\\\*(?=.+)/g,
+
+    // '*.js' matches '.js'
+    // '*.js' doesn't match 'abc'
+    (_, p1) => `${p1}[^\\/]*`
+  ],
+
+  // trailing wildcard
+  [
+    /(\^|\\\/)?\\\*$/,
+    (_, p1) => {
+      const prefix = p1
+        // '\^':
+        // '/*' does not match ''
+        // '/*' does not match everything
+
+        // '\\\/':
+        // 'abc/*' does not match 'abc/'
+        ? `${p1}[^/]+`
+
+        // 'a*' matches 'a'
+        // 'a*' matches 'aa'
+        : '[^/]*'
+
+      return `${prefix}(?=$|\\/$)`
+    }
+  ],
+
+  [
+    // unescape
+    /\\\\\\/g,
+    () => '\\'
+  ]
+]
+
+// A simple cache, because an ignore rule only has only one certain meaning
+const regexCache = Object.create(null)
+
+// @param {pattern}
+const makeRegex = (pattern, negative, ignorecase) => {
+  const r = regexCache[pattern]
+  if (r) {
+    return r
+  }
+
+  // const replacers = negative
+  //   ? NEGATIVE_REPLACERS
+  //   : POSITIVE_REPLACERS
+
+  const source = REPLACERS.reduce(
+    (prev, current) => prev.replace(current[0], current[1].bind(pattern)),
+    pattern
+  )
+
+  return regexCache[pattern] = ignorecase
+    ? new RegExp(source, 'i')
+    : new RegExp(source)
+}
+
+const isString = subject => typeof subject === 'string'
+
+// > A blank line matches no files, so it can serve as a separator for readability.
+const checkPattern = pattern => pattern
+  && isString(pattern)
+  && !REGEX_TEST_BLANK_LINE.test(pattern)
+
+  // > A line starting with # serves as a comment.
+  && pattern.indexOf('#') !== 0
+
+const splitPattern = pattern => pattern.split(REGEX_SPLITALL_CRLF)
+
+class IgnoreRule {
+  constructor (
+    origin,
+    pattern,
+    negative,
+    regex
+  ) {
+    this.origin = origin
+    this.pattern = pattern
+    this.negative = negative
+    this.regex = regex
+  }
+}
+
+const createRule = (pattern, ignorecase) => {
+  const origin = pattern
+  let negative = false
+
+  // > An optional prefix "!" which negates the pattern;
+  if (pattern.indexOf('!') === 0) {
+    negative = true
+    pattern = pattern.substr(1)
+  }
+
+  pattern = pattern
+  // > Put a backslash ("\") in front of the first "!" for patterns that
+  // >   begin with a literal "!", for example, `"\!important!.txt"`.
+  .replace(REGEX_REPLACE_LEADING_EXCAPED_EXCLAMATION, '!')
+  // > Put a backslash ("\") in front of the first hash for patterns that
+  // >   begin with a hash.
+  .replace(REGEX_REPLACE_LEADING_EXCAPED_HASH, '#')
+
+  const regex = makeRegex(pattern, negative, ignorecase)
+
+  return new IgnoreRule(
+    origin,
+    pattern,
+    negative,
+    regex
+  )
+}
+
+const throwError = (message, Ctor) => {
+  throw new Ctor(message)
+}
+
+const checkPath = (path, originalPath, doThrow) => {
+  if (!isString(path)) {
+    return doThrow(
+      `path must be a string, but got \`${originalPath}\``,
+      TypeError
+    )
+  }
+
+  // We don't know if we should ignore '', so throw
+  if (!path) {
+    return doThrow(`path must not be empty`, TypeError)
+  }
+
+  // Check if it is a relative path
+  if (checkPath.isNotRelative(path)) {
+    const r = '`path.relative()`d'
+    return doThrow(
+      `path should be a ${r} string, but got "${originalPath}"`,
+      RangeError
+    )
+  }
+
+  return true
+}
+
+const isNotRelative = path => REGEX_TEST_INVALID_PATH.test(path)
+
+checkPath.isNotRelative = isNotRelative
+checkPath.convert = p => p
+
+class Ignore {
+  constructor ({
+    ignorecase = true
+  } = {}) {
+    this._rules = []
+    this._ignorecase = ignorecase
+    define(this, KEY_IGNORE, true)
+    this._initCache()
+  }
+
+  _initCache () {
+    this._ignoreCache = Object.create(null)
+    this._testCache = Object.create(null)
+  }
+
+  _addPattern (pattern) {
+    // #32
+    if (pattern && pattern[KEY_IGNORE]) {
+      this._rules = this._rules.concat(pattern._rules)
+      this._added = true
+      return
+    }
+
+    if (checkPattern(pattern)) {
+      const rule = createRule(pattern, this._ignorecase)
+      this._added = true
+      this._rules.push(rule)
+    }
+  }
+
+  // @param {Array<string> | string | Ignore} pattern
+  add (pattern) {
+    this._added = false
+
+    makeArray(
+      isString(pattern)
+        ? splitPattern(pattern)
+        : pattern
+    ).forEach(this._addPattern, this)
+
+    // Some rules have just added to the ignore,
+    // making the behavior changed.
+    if (this._added) {
+      this._initCache()
+    }
+
+    return this
+  }
+
+  // legacy
+  addPattern (pattern) {
+    return this.add(pattern)
+  }
+
+  //          |           ignored : unignored
+  // negative |   0:0   |   0:1   |   1:0   |   1:1
+  // -------- | ------- | ------- | ------- | --------
+  //     0    |  TEST   |  TEST   |  SKIP   |    X
+  //     1    |  TESTIF |  SKIP   |  TEST   |    X
+
+  // - SKIP: always skip
+  // - TEST: always test
+  // - TESTIF: only test if checkUnignored
+  // - X: that never happen
+
+  // @param {boolean} whether should check if the path is unignored,
+  //   setting `checkUnignored` to `false` could reduce additional
+  //   path matching.
+
+  // @returns {TestResult} true if a file is ignored
+  _testOne (path, checkUnignored) {
+    let ignored = false
+    let unignored = false
+
+    this._rules.forEach(rule => {
+      const {negative} = rule
+      if (
+        unignored === negative && ignored !== unignored
+        || negative && !ignored && !unignored && !checkUnignored
+      ) {
+        return
+      }
+
+      const matched = rule.regex.test(path)
+
+      if (matched) {
+        ignored = !negative
+        unignored = negative
+      }
+    })
+
+    return {
+      ignored,
+      unignored
+    }
+  }
+
+  // @returns {TestResult}
+  _test (originalPath, cache, checkUnignored, slices) {
+    const path = originalPath
+      // Supports nullable path
+      && checkPath.convert(originalPath)
+
+    checkPath(path, originalPath, throwError)
+
+    return this._t(path, cache, checkUnignored, slices)
+  }
+
+  _t (path, cache, checkUnignored, slices) {
+    if (path in cache) {
+      return cache[path]
+    }
+
+    if (!slices) {
+      // path/to/a.js
+      // ['path', 'to', 'a.js']
+      slices = path.split(SLASH)
+    }
+
+    slices.pop()
+
+    // If the path has no parent directory, just test it
+    if (!slices.length) {
+      return cache[path] = this._testOne(path, checkUnignored)
+    }
+
+    const parent = this._t(
+      slices.join(SLASH) + SLASH,
+      cache,
+      checkUnignored,
+      slices
+    )
+
+    // If the path contains a parent directory, check the parent first
+    return cache[path] = parent.ignored
+      // > It is not possible to re-include a file if a parent directory of
+      // >   that file is excluded.
+      ? parent
+      : this._testOne(path, checkUnignored)
+  }
+
+  ignores (path) {
+    return this._test(path, this._ignoreCache, false).ignored
+  }
+
+  createFilter () {
+    return path => !this.ignores(path)
+  }
+
+  filter (paths) {
+    return makeArray(paths).filter(this.createFilter())
+  }
+
+  // @returns {TestResult}
+  test (path) {
+    return this._test(path, this._testCache, true)
+  }
+}
+
+const factory = options => new Ignore(options)
+
+const returnFalse = () => false
+
+const isPathValid = path =>
+  checkPath(path && checkPath.convert(path), path, returnFalse)
+
+factory.isPathValid = isPathValid
+
+// Fixes typescript
+factory.default = factory
+
+module.exports = factory
+
+// Windows
+// --------------------------------------------------------------
+/* istanbul ignore if  */
+if (
+  // Detect `process` so that it can run in browsers.
+  typeof process !== 'undefined'
+  && (
+    process.env && process.env.IGNORE_TEST_WIN32
+    || process.platform === 'win32'
+  )
+) {
+  /* eslint no-control-regex: "off" */
+  const makePosix = str => /^\\\\\?\\/.test(str)
+  || /["<>|\u0000-\u001F]+/u.test(str)
+    ? str
+    : str.replace(/\\/g, '/')
+
+  checkPath.convert = makePosix
+
+  // 'C:\\foo'     <- 'C:\\foo' has been converted to 'C:/'
+  // 'd:\\foo'
+  const REGIX_IS_WINDOWS_PATH_ABSOLUTE = /^[a-z]:\//i
+  checkPath.isNotRelative = path =>
+    REGIX_IS_WINDOWS_PATH_ABSOLUTE.test(path)
+    || isNotRelative(path)
+}
+
+
+/***/ }),
 /* 128 */,
 /* 129 */
 /***/ (function(module) {
@@ -7358,7 +5085,1235 @@ function Octokit(plugins, options) {
 
 
 /***/ }),
-/* 136 */,
+/* 136 */
+/***/ (function(__unusedmodule, exports, __webpack_require__) {
+
+"use strict";
+
+
+// (C) 1995-2013 Jean-loup Gailly and Mark Adler
+// (C) 2014-2017 Vitaly Puzrin and Andrey Tupitsin
+//
+// This software is provided 'as-is', without any express or implied
+// warranty. In no event will the authors be held liable for any damages
+// arising from the use of this software.
+//
+// Permission is granted to anyone to use this software for any purpose,
+// including commercial applications, and to alter it and redistribute it
+// freely, subject to the following restrictions:
+//
+// 1. The origin of this software must not be misrepresented; you must not
+//   claim that you wrote the original software. If you use this software
+//   in a product, an acknowledgment in the product documentation would be
+//   appreciated but is not required.
+// 2. Altered source versions must be plainly marked as such, and must not be
+//   misrepresented as being the original software.
+// 3. This notice may not be removed or altered from any source distribution.
+
+/* eslint-disable space-unary-ops */
+
+var utils = __webpack_require__(999);
+
+/* Public constants ==========================================================*/
+/* ===========================================================================*/
+
+
+//var Z_FILTERED          = 1;
+//var Z_HUFFMAN_ONLY      = 2;
+//var Z_RLE               = 3;
+var Z_FIXED               = 4;
+//var Z_DEFAULT_STRATEGY  = 0;
+
+/* Possible values of the data_type field (though see inflate()) */
+var Z_BINARY              = 0;
+var Z_TEXT                = 1;
+//var Z_ASCII             = 1; // = Z_TEXT
+var Z_UNKNOWN             = 2;
+
+/*============================================================================*/
+
+
+function zero(buf) { var len = buf.length; while (--len >= 0) { buf[len] = 0; } }
+
+// From zutil.h
+
+var STORED_BLOCK = 0;
+var STATIC_TREES = 1;
+var DYN_TREES    = 2;
+/* The three kinds of block type */
+
+var MIN_MATCH    = 3;
+var MAX_MATCH    = 258;
+/* The minimum and maximum match lengths */
+
+// From deflate.h
+/* ===========================================================================
+ * Internal compression state.
+ */
+
+var LENGTH_CODES  = 29;
+/* number of length codes, not counting the special END_BLOCK code */
+
+var LITERALS      = 256;
+/* number of literal bytes 0..255 */
+
+var L_CODES       = LITERALS + 1 + LENGTH_CODES;
+/* number of Literal or Length codes, including the END_BLOCK code */
+
+var D_CODES       = 30;
+/* number of distance codes */
+
+var BL_CODES      = 19;
+/* number of codes used to transfer the bit lengths */
+
+var HEAP_SIZE     = 2 * L_CODES + 1;
+/* maximum heap size */
+
+var MAX_BITS      = 15;
+/* All codes must not exceed MAX_BITS bits */
+
+var Buf_size      = 16;
+/* size of bit buffer in bi_buf */
+
+
+/* ===========================================================================
+ * Constants
+ */
+
+var MAX_BL_BITS = 7;
+/* Bit length codes must not exceed MAX_BL_BITS bits */
+
+var END_BLOCK   = 256;
+/* end of block literal code */
+
+var REP_3_6     = 16;
+/* repeat previous bit length 3-6 times (2 bits of repeat count) */
+
+var REPZ_3_10   = 17;
+/* repeat a zero length 3-10 times  (3 bits of repeat count) */
+
+var REPZ_11_138 = 18;
+/* repeat a zero length 11-138 times  (7 bits of repeat count) */
+
+/* eslint-disable comma-spacing,array-bracket-spacing */
+var extra_lbits =   /* extra bits for each length code */
+  [0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0];
+
+var extra_dbits =   /* extra bits for each distance code */
+  [0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13];
+
+var extra_blbits =  /* extra bits for each bit length code */
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,3,7];
+
+var bl_order =
+  [16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15];
+/* eslint-enable comma-spacing,array-bracket-spacing */
+
+/* The lengths of the bit length codes are sent in order of decreasing
+ * probability, to avoid transmitting the lengths for unused bit length codes.
+ */
+
+/* ===========================================================================
+ * Local data. These are initialized only once.
+ */
+
+// We pre-fill arrays with 0 to avoid uninitialized gaps
+
+var DIST_CODE_LEN = 512; /* see definition of array dist_code below */
+
+// !!!! Use flat array instead of structure, Freq = i*2, Len = i*2+1
+var static_ltree  = new Array((L_CODES + 2) * 2);
+zero(static_ltree);
+/* The static literal tree. Since the bit lengths are imposed, there is no
+ * need for the L_CODES extra codes used during heap construction. However
+ * The codes 286 and 287 are needed to build a canonical tree (see _tr_init
+ * below).
+ */
+
+var static_dtree  = new Array(D_CODES * 2);
+zero(static_dtree);
+/* The static distance tree. (Actually a trivial tree since all codes use
+ * 5 bits.)
+ */
+
+var _dist_code    = new Array(DIST_CODE_LEN);
+zero(_dist_code);
+/* Distance codes. The first 256 values correspond to the distances
+ * 3 .. 258, the last 256 values correspond to the top 8 bits of
+ * the 15 bit distances.
+ */
+
+var _length_code  = new Array(MAX_MATCH - MIN_MATCH + 1);
+zero(_length_code);
+/* length code for each normalized match length (0 == MIN_MATCH) */
+
+var base_length   = new Array(LENGTH_CODES);
+zero(base_length);
+/* First normalized length for each code (0 = MIN_MATCH) */
+
+var base_dist     = new Array(D_CODES);
+zero(base_dist);
+/* First normalized distance for each code (0 = distance of 1) */
+
+
+function StaticTreeDesc(static_tree, extra_bits, extra_base, elems, max_length) {
+
+  this.static_tree  = static_tree;  /* static tree or NULL */
+  this.extra_bits   = extra_bits;   /* extra bits for each code or NULL */
+  this.extra_base   = extra_base;   /* base index for extra_bits */
+  this.elems        = elems;        /* max number of elements in the tree */
+  this.max_length   = max_length;   /* max bit length for the codes */
+
+  // show if `static_tree` has data or dummy - needed for monomorphic objects
+  this.has_stree    = static_tree && static_tree.length;
+}
+
+
+var static_l_desc;
+var static_d_desc;
+var static_bl_desc;
+
+
+function TreeDesc(dyn_tree, stat_desc) {
+  this.dyn_tree = dyn_tree;     /* the dynamic tree */
+  this.max_code = 0;            /* largest code with non zero frequency */
+  this.stat_desc = stat_desc;   /* the corresponding static tree */
+}
+
+
+
+function d_code(dist) {
+  return dist < 256 ? _dist_code[dist] : _dist_code[256 + (dist >>> 7)];
+}
+
+
+/* ===========================================================================
+ * Output a short LSB first on the stream.
+ * IN assertion: there is enough room in pendingBuf.
+ */
+function put_short(s, w) {
+//    put_byte(s, (uch)((w) & 0xff));
+//    put_byte(s, (uch)((ush)(w) >> 8));
+  s.pending_buf[s.pending++] = (w) & 0xff;
+  s.pending_buf[s.pending++] = (w >>> 8) & 0xff;
+}
+
+
+/* ===========================================================================
+ * Send a value on a given number of bits.
+ * IN assertion: length <= 16 and value fits in length bits.
+ */
+function send_bits(s, value, length) {
+  if (s.bi_valid > (Buf_size - length)) {
+    s.bi_buf |= (value << s.bi_valid) & 0xffff;
+    put_short(s, s.bi_buf);
+    s.bi_buf = value >> (Buf_size - s.bi_valid);
+    s.bi_valid += length - Buf_size;
+  } else {
+    s.bi_buf |= (value << s.bi_valid) & 0xffff;
+    s.bi_valid += length;
+  }
+}
+
+
+function send_code(s, c, tree) {
+  send_bits(s, tree[c * 2]/*.Code*/, tree[c * 2 + 1]/*.Len*/);
+}
+
+
+/* ===========================================================================
+ * Reverse the first len bits of a code, using straightforward code (a faster
+ * method would use a table)
+ * IN assertion: 1 <= len <= 15
+ */
+function bi_reverse(code, len) {
+  var res = 0;
+  do {
+    res |= code & 1;
+    code >>>= 1;
+    res <<= 1;
+  } while (--len > 0);
+  return res >>> 1;
+}
+
+
+/* ===========================================================================
+ * Flush the bit buffer, keeping at most 7 bits in it.
+ */
+function bi_flush(s) {
+  if (s.bi_valid === 16) {
+    put_short(s, s.bi_buf);
+    s.bi_buf = 0;
+    s.bi_valid = 0;
+
+  } else if (s.bi_valid >= 8) {
+    s.pending_buf[s.pending++] = s.bi_buf & 0xff;
+    s.bi_buf >>= 8;
+    s.bi_valid -= 8;
+  }
+}
+
+
+/* ===========================================================================
+ * Compute the optimal bit lengths for a tree and update the total bit length
+ * for the current block.
+ * IN assertion: the fields freq and dad are set, heap[heap_max] and
+ *    above are the tree nodes sorted by increasing frequency.
+ * OUT assertions: the field len is set to the optimal bit length, the
+ *     array bl_count contains the frequencies for each bit length.
+ *     The length opt_len is updated; static_len is also updated if stree is
+ *     not null.
+ */
+function gen_bitlen(s, desc)
+//    deflate_state *s;
+//    tree_desc *desc;    /* the tree descriptor */
+{
+  var tree            = desc.dyn_tree;
+  var max_code        = desc.max_code;
+  var stree           = desc.stat_desc.static_tree;
+  var has_stree       = desc.stat_desc.has_stree;
+  var extra           = desc.stat_desc.extra_bits;
+  var base            = desc.stat_desc.extra_base;
+  var max_length      = desc.stat_desc.max_length;
+  var h;              /* heap index */
+  var n, m;           /* iterate over the tree elements */
+  var bits;           /* bit length */
+  var xbits;          /* extra bits */
+  var f;              /* frequency */
+  var overflow = 0;   /* number of elements with bit length too large */
+
+  for (bits = 0; bits <= MAX_BITS; bits++) {
+    s.bl_count[bits] = 0;
+  }
+
+  /* In a first pass, compute the optimal bit lengths (which may
+   * overflow in the case of the bit length tree).
+   */
+  tree[s.heap[s.heap_max] * 2 + 1]/*.Len*/ = 0; /* root of the heap */
+
+  for (h = s.heap_max + 1; h < HEAP_SIZE; h++) {
+    n = s.heap[h];
+    bits = tree[tree[n * 2 + 1]/*.Dad*/ * 2 + 1]/*.Len*/ + 1;
+    if (bits > max_length) {
+      bits = max_length;
+      overflow++;
+    }
+    tree[n * 2 + 1]/*.Len*/ = bits;
+    /* We overwrite tree[n].Dad which is no longer needed */
+
+    if (n > max_code) { continue; } /* not a leaf node */
+
+    s.bl_count[bits]++;
+    xbits = 0;
+    if (n >= base) {
+      xbits = extra[n - base];
+    }
+    f = tree[n * 2]/*.Freq*/;
+    s.opt_len += f * (bits + xbits);
+    if (has_stree) {
+      s.static_len += f * (stree[n * 2 + 1]/*.Len*/ + xbits);
+    }
+  }
+  if (overflow === 0) { return; }
+
+  // Trace((stderr,"\nbit length overflow\n"));
+  /* This happens for example on obj2 and pic of the Calgary corpus */
+
+  /* Find the first bit length which could increase: */
+  do {
+    bits = max_length - 1;
+    while (s.bl_count[bits] === 0) { bits--; }
+    s.bl_count[bits]--;      /* move one leaf down the tree */
+    s.bl_count[bits + 1] += 2; /* move one overflow item as its brother */
+    s.bl_count[max_length]--;
+    /* The brother of the overflow item also moves one step up,
+     * but this does not affect bl_count[max_length]
+     */
+    overflow -= 2;
+  } while (overflow > 0);
+
+  /* Now recompute all bit lengths, scanning in increasing frequency.
+   * h is still equal to HEAP_SIZE. (It is simpler to reconstruct all
+   * lengths instead of fixing only the wrong ones. This idea is taken
+   * from 'ar' written by Haruhiko Okumura.)
+   */
+  for (bits = max_length; bits !== 0; bits--) {
+    n = s.bl_count[bits];
+    while (n !== 0) {
+      m = s.heap[--h];
+      if (m > max_code) { continue; }
+      if (tree[m * 2 + 1]/*.Len*/ !== bits) {
+        // Trace((stderr,"code %d bits %d->%d\n", m, tree[m].Len, bits));
+        s.opt_len += (bits - tree[m * 2 + 1]/*.Len*/) * tree[m * 2]/*.Freq*/;
+        tree[m * 2 + 1]/*.Len*/ = bits;
+      }
+      n--;
+    }
+  }
+}
+
+
+/* ===========================================================================
+ * Generate the codes for a given tree and bit counts (which need not be
+ * optimal).
+ * IN assertion: the array bl_count contains the bit length statistics for
+ * the given tree and the field len is set for all tree elements.
+ * OUT assertion: the field code is set for all tree elements of non
+ *     zero code length.
+ */
+function gen_codes(tree, max_code, bl_count)
+//    ct_data *tree;             /* the tree to decorate */
+//    int max_code;              /* largest code with non zero frequency */
+//    ushf *bl_count;            /* number of codes at each bit length */
+{
+  var next_code = new Array(MAX_BITS + 1); /* next code value for each bit length */
+  var code = 0;              /* running code value */
+  var bits;                  /* bit index */
+  var n;                     /* code index */
+
+  /* The distribution counts are first used to generate the code values
+   * without bit reversal.
+   */
+  for (bits = 1; bits <= MAX_BITS; bits++) {
+    next_code[bits] = code = (code + bl_count[bits - 1]) << 1;
+  }
+  /* Check that the bit counts in bl_count are consistent. The last code
+   * must be all ones.
+   */
+  //Assert (code + bl_count[MAX_BITS]-1 == (1<<MAX_BITS)-1,
+  //        "inconsistent bit counts");
+  //Tracev((stderr,"\ngen_codes: max_code %d ", max_code));
+
+  for (n = 0;  n <= max_code; n++) {
+    var len = tree[n * 2 + 1]/*.Len*/;
+    if (len === 0) { continue; }
+    /* Now reverse the bits */
+    tree[n * 2]/*.Code*/ = bi_reverse(next_code[len]++, len);
+
+    //Tracecv(tree != static_ltree, (stderr,"\nn %3d %c l %2d c %4x (%x) ",
+    //     n, (isgraph(n) ? n : ' '), len, tree[n].Code, next_code[len]-1));
+  }
+}
+
+
+/* ===========================================================================
+ * Initialize the various 'constant' tables.
+ */
+function tr_static_init() {
+  var n;        /* iterates over tree elements */
+  var bits;     /* bit counter */
+  var length;   /* length value */
+  var code;     /* code value */
+  var dist;     /* distance index */
+  var bl_count = new Array(MAX_BITS + 1);
+  /* number of codes at each bit length for an optimal tree */
+
+  // do check in _tr_init()
+  //if (static_init_done) return;
+
+  /* For some embedded targets, global variables are not initialized: */
+/*#ifdef NO_INIT_GLOBAL_POINTERS
+  static_l_desc.static_tree = static_ltree;
+  static_l_desc.extra_bits = extra_lbits;
+  static_d_desc.static_tree = static_dtree;
+  static_d_desc.extra_bits = extra_dbits;
+  static_bl_desc.extra_bits = extra_blbits;
+#endif*/
+
+  /* Initialize the mapping length (0..255) -> length code (0..28) */
+  length = 0;
+  for (code = 0; code < LENGTH_CODES - 1; code++) {
+    base_length[code] = length;
+    for (n = 0; n < (1 << extra_lbits[code]); n++) {
+      _length_code[length++] = code;
+    }
+  }
+  //Assert (length == 256, "tr_static_init: length != 256");
+  /* Note that the length 255 (match length 258) can be represented
+   * in two different ways: code 284 + 5 bits or code 285, so we
+   * overwrite length_code[255] to use the best encoding:
+   */
+  _length_code[length - 1] = code;
+
+  /* Initialize the mapping dist (0..32K) -> dist code (0..29) */
+  dist = 0;
+  for (code = 0; code < 16; code++) {
+    base_dist[code] = dist;
+    for (n = 0; n < (1 << extra_dbits[code]); n++) {
+      _dist_code[dist++] = code;
+    }
+  }
+  //Assert (dist == 256, "tr_static_init: dist != 256");
+  dist >>= 7; /* from now on, all distances are divided by 128 */
+  for (; code < D_CODES; code++) {
+    base_dist[code] = dist << 7;
+    for (n = 0; n < (1 << (extra_dbits[code] - 7)); n++) {
+      _dist_code[256 + dist++] = code;
+    }
+  }
+  //Assert (dist == 256, "tr_static_init: 256+dist != 512");
+
+  /* Construct the codes of the static literal tree */
+  for (bits = 0; bits <= MAX_BITS; bits++) {
+    bl_count[bits] = 0;
+  }
+
+  n = 0;
+  while (n <= 143) {
+    static_ltree[n * 2 + 1]/*.Len*/ = 8;
+    n++;
+    bl_count[8]++;
+  }
+  while (n <= 255) {
+    static_ltree[n * 2 + 1]/*.Len*/ = 9;
+    n++;
+    bl_count[9]++;
+  }
+  while (n <= 279) {
+    static_ltree[n * 2 + 1]/*.Len*/ = 7;
+    n++;
+    bl_count[7]++;
+  }
+  while (n <= 287) {
+    static_ltree[n * 2 + 1]/*.Len*/ = 8;
+    n++;
+    bl_count[8]++;
+  }
+  /* Codes 286 and 287 do not exist, but we must include them in the
+   * tree construction to get a canonical Huffman tree (longest code
+   * all ones)
+   */
+  gen_codes(static_ltree, L_CODES + 1, bl_count);
+
+  /* The static distance tree is trivial: */
+  for (n = 0; n < D_CODES; n++) {
+    static_dtree[n * 2 + 1]/*.Len*/ = 5;
+    static_dtree[n * 2]/*.Code*/ = bi_reverse(n, 5);
+  }
+
+  // Now data ready and we can init static trees
+  static_l_desc = new StaticTreeDesc(static_ltree, extra_lbits, LITERALS + 1, L_CODES, MAX_BITS);
+  static_d_desc = new StaticTreeDesc(static_dtree, extra_dbits, 0,          D_CODES, MAX_BITS);
+  static_bl_desc = new StaticTreeDesc(new Array(0), extra_blbits, 0,         BL_CODES, MAX_BL_BITS);
+
+  //static_init_done = true;
+}
+
+
+/* ===========================================================================
+ * Initialize a new block.
+ */
+function init_block(s) {
+  var n; /* iterates over tree elements */
+
+  /* Initialize the trees. */
+  for (n = 0; n < L_CODES;  n++) { s.dyn_ltree[n * 2]/*.Freq*/ = 0; }
+  for (n = 0; n < D_CODES;  n++) { s.dyn_dtree[n * 2]/*.Freq*/ = 0; }
+  for (n = 0; n < BL_CODES; n++) { s.bl_tree[n * 2]/*.Freq*/ = 0; }
+
+  s.dyn_ltree[END_BLOCK * 2]/*.Freq*/ = 1;
+  s.opt_len = s.static_len = 0;
+  s.last_lit = s.matches = 0;
+}
+
+
+/* ===========================================================================
+ * Flush the bit buffer and align the output on a byte boundary
+ */
+function bi_windup(s)
+{
+  if (s.bi_valid > 8) {
+    put_short(s, s.bi_buf);
+  } else if (s.bi_valid > 0) {
+    //put_byte(s, (Byte)s->bi_buf);
+    s.pending_buf[s.pending++] = s.bi_buf;
+  }
+  s.bi_buf = 0;
+  s.bi_valid = 0;
+}
+
+/* ===========================================================================
+ * Copy a stored block, storing first the length and its
+ * one's complement if requested.
+ */
+function copy_block(s, buf, len, header)
+//DeflateState *s;
+//charf    *buf;    /* the input data */
+//unsigned len;     /* its length */
+//int      header;  /* true if block header must be written */
+{
+  bi_windup(s);        /* align on byte boundary */
+
+  if (header) {
+    put_short(s, len);
+    put_short(s, ~len);
+  }
+//  while (len--) {
+//    put_byte(s, *buf++);
+//  }
+  utils.arraySet(s.pending_buf, s.window, buf, len, s.pending);
+  s.pending += len;
+}
+
+/* ===========================================================================
+ * Compares to subtrees, using the tree depth as tie breaker when
+ * the subtrees have equal frequency. This minimizes the worst case length.
+ */
+function smaller(tree, n, m, depth) {
+  var _n2 = n * 2;
+  var _m2 = m * 2;
+  return (tree[_n2]/*.Freq*/ < tree[_m2]/*.Freq*/ ||
+         (tree[_n2]/*.Freq*/ === tree[_m2]/*.Freq*/ && depth[n] <= depth[m]));
+}
+
+/* ===========================================================================
+ * Restore the heap property by moving down the tree starting at node k,
+ * exchanging a node with the smallest of its two sons if necessary, stopping
+ * when the heap property is re-established (each father smaller than its
+ * two sons).
+ */
+function pqdownheap(s, tree, k)
+//    deflate_state *s;
+//    ct_data *tree;  /* the tree to restore */
+//    int k;               /* node to move down */
+{
+  var v = s.heap[k];
+  var j = k << 1;  /* left son of k */
+  while (j <= s.heap_len) {
+    /* Set j to the smallest of the two sons: */
+    if (j < s.heap_len &&
+      smaller(tree, s.heap[j + 1], s.heap[j], s.depth)) {
+      j++;
+    }
+    /* Exit if v is smaller than both sons */
+    if (smaller(tree, v, s.heap[j], s.depth)) { break; }
+
+    /* Exchange v with the smallest son */
+    s.heap[k] = s.heap[j];
+    k = j;
+
+    /* And continue down the tree, setting j to the left son of k */
+    j <<= 1;
+  }
+  s.heap[k] = v;
+}
+
+
+// inlined manually
+// var SMALLEST = 1;
+
+/* ===========================================================================
+ * Send the block data compressed using the given Huffman trees
+ */
+function compress_block(s, ltree, dtree)
+//    deflate_state *s;
+//    const ct_data *ltree; /* literal tree */
+//    const ct_data *dtree; /* distance tree */
+{
+  var dist;           /* distance of matched string */
+  var lc;             /* match length or unmatched char (if dist == 0) */
+  var lx = 0;         /* running index in l_buf */
+  var code;           /* the code to send */
+  var extra;          /* number of extra bits to send */
+
+  if (s.last_lit !== 0) {
+    do {
+      dist = (s.pending_buf[s.d_buf + lx * 2] << 8) | (s.pending_buf[s.d_buf + lx * 2 + 1]);
+      lc = s.pending_buf[s.l_buf + lx];
+      lx++;
+
+      if (dist === 0) {
+        send_code(s, lc, ltree); /* send a literal byte */
+        //Tracecv(isgraph(lc), (stderr," '%c' ", lc));
+      } else {
+        /* Here, lc is the match length - MIN_MATCH */
+        code = _length_code[lc];
+        send_code(s, code + LITERALS + 1, ltree); /* send the length code */
+        extra = extra_lbits[code];
+        if (extra !== 0) {
+          lc -= base_length[code];
+          send_bits(s, lc, extra);       /* send the extra length bits */
+        }
+        dist--; /* dist is now the match distance - 1 */
+        code = d_code(dist);
+        //Assert (code < D_CODES, "bad d_code");
+
+        send_code(s, code, dtree);       /* send the distance code */
+        extra = extra_dbits[code];
+        if (extra !== 0) {
+          dist -= base_dist[code];
+          send_bits(s, dist, extra);   /* send the extra distance bits */
+        }
+      } /* literal or match pair ? */
+
+      /* Check that the overlay between pending_buf and d_buf+l_buf is ok: */
+      //Assert((uInt)(s->pending) < s->lit_bufsize + 2*lx,
+      //       "pendingBuf overflow");
+
+    } while (lx < s.last_lit);
+  }
+
+  send_code(s, END_BLOCK, ltree);
+}
+
+
+/* ===========================================================================
+ * Construct one Huffman tree and assigns the code bit strings and lengths.
+ * Update the total bit length for the current block.
+ * IN assertion: the field freq is set for all tree elements.
+ * OUT assertions: the fields len and code are set to the optimal bit length
+ *     and corresponding code. The length opt_len is updated; static_len is
+ *     also updated if stree is not null. The field max_code is set.
+ */
+function build_tree(s, desc)
+//    deflate_state *s;
+//    tree_desc *desc; /* the tree descriptor */
+{
+  var tree     = desc.dyn_tree;
+  var stree    = desc.stat_desc.static_tree;
+  var has_stree = desc.stat_desc.has_stree;
+  var elems    = desc.stat_desc.elems;
+  var n, m;          /* iterate over heap elements */
+  var max_code = -1; /* largest code with non zero frequency */
+  var node;          /* new node being created */
+
+  /* Construct the initial heap, with least frequent element in
+   * heap[SMALLEST]. The sons of heap[n] are heap[2*n] and heap[2*n+1].
+   * heap[0] is not used.
+   */
+  s.heap_len = 0;
+  s.heap_max = HEAP_SIZE;
+
+  for (n = 0; n < elems; n++) {
+    if (tree[n * 2]/*.Freq*/ !== 0) {
+      s.heap[++s.heap_len] = max_code = n;
+      s.depth[n] = 0;
+
+    } else {
+      tree[n * 2 + 1]/*.Len*/ = 0;
+    }
+  }
+
+  /* The pkzip format requires that at least one distance code exists,
+   * and that at least one bit should be sent even if there is only one
+   * possible code. So to avoid special checks later on we force at least
+   * two codes of non zero frequency.
+   */
+  while (s.heap_len < 2) {
+    node = s.heap[++s.heap_len] = (max_code < 2 ? ++max_code : 0);
+    tree[node * 2]/*.Freq*/ = 1;
+    s.depth[node] = 0;
+    s.opt_len--;
+
+    if (has_stree) {
+      s.static_len -= stree[node * 2 + 1]/*.Len*/;
+    }
+    /* node is 0 or 1 so it does not have extra bits */
+  }
+  desc.max_code = max_code;
+
+  /* The elements heap[heap_len/2+1 .. heap_len] are leaves of the tree,
+   * establish sub-heaps of increasing lengths:
+   */
+  for (n = (s.heap_len >> 1/*int /2*/); n >= 1; n--) { pqdownheap(s, tree, n); }
+
+  /* Construct the Huffman tree by repeatedly combining the least two
+   * frequent nodes.
+   */
+  node = elems;              /* next internal node of the tree */
+  do {
+    //pqremove(s, tree, n);  /* n = node of least frequency */
+    /*** pqremove ***/
+    n = s.heap[1/*SMALLEST*/];
+    s.heap[1/*SMALLEST*/] = s.heap[s.heap_len--];
+    pqdownheap(s, tree, 1/*SMALLEST*/);
+    /***/
+
+    m = s.heap[1/*SMALLEST*/]; /* m = node of next least frequency */
+
+    s.heap[--s.heap_max] = n; /* keep the nodes sorted by frequency */
+    s.heap[--s.heap_max] = m;
+
+    /* Create a new node father of n and m */
+    tree[node * 2]/*.Freq*/ = tree[n * 2]/*.Freq*/ + tree[m * 2]/*.Freq*/;
+    s.depth[node] = (s.depth[n] >= s.depth[m] ? s.depth[n] : s.depth[m]) + 1;
+    tree[n * 2 + 1]/*.Dad*/ = tree[m * 2 + 1]/*.Dad*/ = node;
+
+    /* and insert the new node in the heap */
+    s.heap[1/*SMALLEST*/] = node++;
+    pqdownheap(s, tree, 1/*SMALLEST*/);
+
+  } while (s.heap_len >= 2);
+
+  s.heap[--s.heap_max] = s.heap[1/*SMALLEST*/];
+
+  /* At this point, the fields freq and dad are set. We can now
+   * generate the bit lengths.
+   */
+  gen_bitlen(s, desc);
+
+  /* The field len is now set, we can generate the bit codes */
+  gen_codes(tree, max_code, s.bl_count);
+}
+
+
+/* ===========================================================================
+ * Scan a literal or distance tree to determine the frequencies of the codes
+ * in the bit length tree.
+ */
+function scan_tree(s, tree, max_code)
+//    deflate_state *s;
+//    ct_data *tree;   /* the tree to be scanned */
+//    int max_code;    /* and its largest code of non zero frequency */
+{
+  var n;                     /* iterates over all tree elements */
+  var prevlen = -1;          /* last emitted length */
+  var curlen;                /* length of current code */
+
+  var nextlen = tree[0 * 2 + 1]/*.Len*/; /* length of next code */
+
+  var count = 0;             /* repeat count of the current code */
+  var max_count = 7;         /* max repeat count */
+  var min_count = 4;         /* min repeat count */
+
+  if (nextlen === 0) {
+    max_count = 138;
+    min_count = 3;
+  }
+  tree[(max_code + 1) * 2 + 1]/*.Len*/ = 0xffff; /* guard */
+
+  for (n = 0; n <= max_code; n++) {
+    curlen = nextlen;
+    nextlen = tree[(n + 1) * 2 + 1]/*.Len*/;
+
+    if (++count < max_count && curlen === nextlen) {
+      continue;
+
+    } else if (count < min_count) {
+      s.bl_tree[curlen * 2]/*.Freq*/ += count;
+
+    } else if (curlen !== 0) {
+
+      if (curlen !== prevlen) { s.bl_tree[curlen * 2]/*.Freq*/++; }
+      s.bl_tree[REP_3_6 * 2]/*.Freq*/++;
+
+    } else if (count <= 10) {
+      s.bl_tree[REPZ_3_10 * 2]/*.Freq*/++;
+
+    } else {
+      s.bl_tree[REPZ_11_138 * 2]/*.Freq*/++;
+    }
+
+    count = 0;
+    prevlen = curlen;
+
+    if (nextlen === 0) {
+      max_count = 138;
+      min_count = 3;
+
+    } else if (curlen === nextlen) {
+      max_count = 6;
+      min_count = 3;
+
+    } else {
+      max_count = 7;
+      min_count = 4;
+    }
+  }
+}
+
+
+/* ===========================================================================
+ * Send a literal or distance tree in compressed form, using the codes in
+ * bl_tree.
+ */
+function send_tree(s, tree, max_code)
+//    deflate_state *s;
+//    ct_data *tree; /* the tree to be scanned */
+//    int max_code;       /* and its largest code of non zero frequency */
+{
+  var n;                     /* iterates over all tree elements */
+  var prevlen = -1;          /* last emitted length */
+  var curlen;                /* length of current code */
+
+  var nextlen = tree[0 * 2 + 1]/*.Len*/; /* length of next code */
+
+  var count = 0;             /* repeat count of the current code */
+  var max_count = 7;         /* max repeat count */
+  var min_count = 4;         /* min repeat count */
+
+  /* tree[max_code+1].Len = -1; */  /* guard already set */
+  if (nextlen === 0) {
+    max_count = 138;
+    min_count = 3;
+  }
+
+  for (n = 0; n <= max_code; n++) {
+    curlen = nextlen;
+    nextlen = tree[(n + 1) * 2 + 1]/*.Len*/;
+
+    if (++count < max_count && curlen === nextlen) {
+      continue;
+
+    } else if (count < min_count) {
+      do { send_code(s, curlen, s.bl_tree); } while (--count !== 0);
+
+    } else if (curlen !== 0) {
+      if (curlen !== prevlen) {
+        send_code(s, curlen, s.bl_tree);
+        count--;
+      }
+      //Assert(count >= 3 && count <= 6, " 3_6?");
+      send_code(s, REP_3_6, s.bl_tree);
+      send_bits(s, count - 3, 2);
+
+    } else if (count <= 10) {
+      send_code(s, REPZ_3_10, s.bl_tree);
+      send_bits(s, count - 3, 3);
+
+    } else {
+      send_code(s, REPZ_11_138, s.bl_tree);
+      send_bits(s, count - 11, 7);
+    }
+
+    count = 0;
+    prevlen = curlen;
+    if (nextlen === 0) {
+      max_count = 138;
+      min_count = 3;
+
+    } else if (curlen === nextlen) {
+      max_count = 6;
+      min_count = 3;
+
+    } else {
+      max_count = 7;
+      min_count = 4;
+    }
+  }
+}
+
+
+/* ===========================================================================
+ * Construct the Huffman tree for the bit lengths and return the index in
+ * bl_order of the last bit length code to send.
+ */
+function build_bl_tree(s) {
+  var max_blindex;  /* index of last bit length code of non zero freq */
+
+  /* Determine the bit length frequencies for literal and distance trees */
+  scan_tree(s, s.dyn_ltree, s.l_desc.max_code);
+  scan_tree(s, s.dyn_dtree, s.d_desc.max_code);
+
+  /* Build the bit length tree: */
+  build_tree(s, s.bl_desc);
+  /* opt_len now includes the length of the tree representations, except
+   * the lengths of the bit lengths codes and the 5+5+4 bits for the counts.
+   */
+
+  /* Determine the number of bit length codes to send. The pkzip format
+   * requires that at least 4 bit length codes be sent. (appnote.txt says
+   * 3 but the actual value used is 4.)
+   */
+  for (max_blindex = BL_CODES - 1; max_blindex >= 3; max_blindex--) {
+    if (s.bl_tree[bl_order[max_blindex] * 2 + 1]/*.Len*/ !== 0) {
+      break;
+    }
+  }
+  /* Update opt_len to include the bit length tree and counts */
+  s.opt_len += 3 * (max_blindex + 1) + 5 + 5 + 4;
+  //Tracev((stderr, "\ndyn trees: dyn %ld, stat %ld",
+  //        s->opt_len, s->static_len));
+
+  return max_blindex;
+}
+
+
+/* ===========================================================================
+ * Send the header for a block using dynamic Huffman trees: the counts, the
+ * lengths of the bit length codes, the literal tree and the distance tree.
+ * IN assertion: lcodes >= 257, dcodes >= 1, blcodes >= 4.
+ */
+function send_all_trees(s, lcodes, dcodes, blcodes)
+//    deflate_state *s;
+//    int lcodes, dcodes, blcodes; /* number of codes for each tree */
+{
+  var rank;                    /* index in bl_order */
+
+  //Assert (lcodes >= 257 && dcodes >= 1 && blcodes >= 4, "not enough codes");
+  //Assert (lcodes <= L_CODES && dcodes <= D_CODES && blcodes <= BL_CODES,
+  //        "too many codes");
+  //Tracev((stderr, "\nbl counts: "));
+  send_bits(s, lcodes - 257, 5); /* not +255 as stated in appnote.txt */
+  send_bits(s, dcodes - 1,   5);
+  send_bits(s, blcodes - 4,  4); /* not -3 as stated in appnote.txt */
+  for (rank = 0; rank < blcodes; rank++) {
+    //Tracev((stderr, "\nbl code %2d ", bl_order[rank]));
+    send_bits(s, s.bl_tree[bl_order[rank] * 2 + 1]/*.Len*/, 3);
+  }
+  //Tracev((stderr, "\nbl tree: sent %ld", s->bits_sent));
+
+  send_tree(s, s.dyn_ltree, lcodes - 1); /* literal tree */
+  //Tracev((stderr, "\nlit tree: sent %ld", s->bits_sent));
+
+  send_tree(s, s.dyn_dtree, dcodes - 1); /* distance tree */
+  //Tracev((stderr, "\ndist tree: sent %ld", s->bits_sent));
+}
+
+
+/* ===========================================================================
+ * Check if the data type is TEXT or BINARY, using the following algorithm:
+ * - TEXT if the two conditions below are satisfied:
+ *    a) There are no non-portable control characters belonging to the
+ *       "black list" (0..6, 14..25, 28..31).
+ *    b) There is at least one printable character belonging to the
+ *       "white list" (9 {TAB}, 10 {LF}, 13 {CR}, 32..255).
+ * - BINARY otherwise.
+ * - The following partially-portable control characters form a
+ *   "gray list" that is ignored in this detection algorithm:
+ *   (7 {BEL}, 8 {BS}, 11 {VT}, 12 {FF}, 26 {SUB}, 27 {ESC}).
+ * IN assertion: the fields Freq of dyn_ltree are set.
+ */
+function detect_data_type(s) {
+  /* black_mask is the bit mask of black-listed bytes
+   * set bits 0..6, 14..25, and 28..31
+   * 0xf3ffc07f = binary 11110011111111111100000001111111
+   */
+  var black_mask = 0xf3ffc07f;
+  var n;
+
+  /* Check for non-textual ("black-listed") bytes. */
+  for (n = 0; n <= 31; n++, black_mask >>>= 1) {
+    if ((black_mask & 1) && (s.dyn_ltree[n * 2]/*.Freq*/ !== 0)) {
+      return Z_BINARY;
+    }
+  }
+
+  /* Check for textual ("white-listed") bytes. */
+  if (s.dyn_ltree[9 * 2]/*.Freq*/ !== 0 || s.dyn_ltree[10 * 2]/*.Freq*/ !== 0 ||
+      s.dyn_ltree[13 * 2]/*.Freq*/ !== 0) {
+    return Z_TEXT;
+  }
+  for (n = 32; n < LITERALS; n++) {
+    if (s.dyn_ltree[n * 2]/*.Freq*/ !== 0) {
+      return Z_TEXT;
+    }
+  }
+
+  /* There are no "black-listed" or "white-listed" bytes:
+   * this stream either is empty or has tolerated ("gray-listed") bytes only.
+   */
+  return Z_BINARY;
+}
+
+
+var static_init_done = false;
+
+/* ===========================================================================
+ * Initialize the tree data structures for a new zlib stream.
+ */
+function _tr_init(s)
+{
+
+  if (!static_init_done) {
+    tr_static_init();
+    static_init_done = true;
+  }
+
+  s.l_desc  = new TreeDesc(s.dyn_ltree, static_l_desc);
+  s.d_desc  = new TreeDesc(s.dyn_dtree, static_d_desc);
+  s.bl_desc = new TreeDesc(s.bl_tree, static_bl_desc);
+
+  s.bi_buf = 0;
+  s.bi_valid = 0;
+
+  /* Initialize the first block of the first file: */
+  init_block(s);
+}
+
+
+/* ===========================================================================
+ * Send a stored block
+ */
+function _tr_stored_block(s, buf, stored_len, last)
+//DeflateState *s;
+//charf *buf;       /* input block */
+//ulg stored_len;   /* length of input block */
+//int last;         /* one if this is the last block for a file */
+{
+  send_bits(s, (STORED_BLOCK << 1) + (last ? 1 : 0), 3);    /* send block type */
+  copy_block(s, buf, stored_len, true); /* with header */
+}
+
+
+/* ===========================================================================
+ * Send one empty static block to give enough lookahead for inflate.
+ * This takes 10 bits, of which 7 may remain in the bit buffer.
+ */
+function _tr_align(s) {
+  send_bits(s, STATIC_TREES << 1, 3);
+  send_code(s, END_BLOCK, static_ltree);
+  bi_flush(s);
+}
+
+
+/* ===========================================================================
+ * Determine the best encoding for the current block: dynamic trees, static
+ * trees or store, and output the encoded block to the zip file.
+ */
+function _tr_flush_block(s, buf, stored_len, last)
+//DeflateState *s;
+//charf *buf;       /* input block, or NULL if too old */
+//ulg stored_len;   /* length of input block */
+//int last;         /* one if this is the last block for a file */
+{
+  var opt_lenb, static_lenb;  /* opt_len and static_len in bytes */
+  var max_blindex = 0;        /* index of last bit length code of non zero freq */
+
+  /* Build the Huffman trees unless a stored block is forced */
+  if (s.level > 0) {
+
+    /* Check if the file is binary or text */
+    if (s.strm.data_type === Z_UNKNOWN) {
+      s.strm.data_type = detect_data_type(s);
+    }
+
+    /* Construct the literal and distance trees */
+    build_tree(s, s.l_desc);
+    // Tracev((stderr, "\nlit data: dyn %ld, stat %ld", s->opt_len,
+    //        s->static_len));
+
+    build_tree(s, s.d_desc);
+    // Tracev((stderr, "\ndist data: dyn %ld, stat %ld", s->opt_len,
+    //        s->static_len));
+    /* At this point, opt_len and static_len are the total bit lengths of
+     * the compressed block data, excluding the tree representations.
+     */
+
+    /* Build the bit length tree for the above two trees, and get the index
+     * in bl_order of the last bit length code to send.
+     */
+    max_blindex = build_bl_tree(s);
+
+    /* Determine the best encoding. Compute the block lengths in bytes. */
+    opt_lenb = (s.opt_len + 3 + 7) >>> 3;
+    static_lenb = (s.static_len + 3 + 7) >>> 3;
+
+    // Tracev((stderr, "\nopt %lu(%lu) stat %lu(%lu) stored %lu lit %u ",
+    //        opt_lenb, s->opt_len, static_lenb, s->static_len, stored_len,
+    //        s->last_lit));
+
+    if (static_lenb <= opt_lenb) { opt_lenb = static_lenb; }
+
+  } else {
+    // Assert(buf != (char*)0, "lost buf");
+    opt_lenb = static_lenb = stored_len + 5; /* force a stored block */
+  }
+
+  if ((stored_len + 4 <= opt_lenb) && (buf !== -1)) {
+    /* 4: two words for the lengths */
+
+    /* The test buf != NULL is only necessary if LIT_BUFSIZE > WSIZE.
+     * Otherwise we can't have processed more than WSIZE input bytes since
+     * the last block flush, because compression would have been
+     * successful. If LIT_BUFSIZE <= WSIZE, it is never too late to
+     * transform a block into a stored block.
+     */
+    _tr_stored_block(s, buf, stored_len, last);
+
+  } else if (s.strategy === Z_FIXED || static_lenb === opt_lenb) {
+
+    send_bits(s, (STATIC_TREES << 1) + (last ? 1 : 0), 3);
+    compress_block(s, static_ltree, static_dtree);
+
+  } else {
+    send_bits(s, (DYN_TREES << 1) + (last ? 1 : 0), 3);
+    send_all_trees(s, s.l_desc.max_code + 1, s.d_desc.max_code + 1, max_blindex + 1);
+    compress_block(s, s.dyn_ltree, s.dyn_dtree);
+  }
+  // Assert (s->compressed_len == s->bits_sent, "bad compressed size");
+  /* The above check is made mod 2^32, for files larger than 512 MB
+   * and uLong implemented on 32 bits.
+   */
+  init_block(s);
+
+  if (last) {
+    bi_windup(s);
+  }
+  // Tracev((stderr,"\ncomprlen %lu(%lu) ", s->compressed_len>>3,
+  //       s->compressed_len-7*last));
+}
+
+/* ===========================================================================
+ * Save the match info and tally the frequency counts. Return true if
+ * the current block must be flushed.
+ */
+function _tr_tally(s, dist, lc)
+//    deflate_state *s;
+//    unsigned dist;  /* distance of matched string */
+//    unsigned lc;    /* match length-MIN_MATCH or unmatched char (if dist==0) */
+{
+  //var out_length, in_length, dcode;
+
+  s.pending_buf[s.d_buf + s.last_lit * 2]     = (dist >>> 8) & 0xff;
+  s.pending_buf[s.d_buf + s.last_lit * 2 + 1] = dist & 0xff;
+
+  s.pending_buf[s.l_buf + s.last_lit] = lc & 0xff;
+  s.last_lit++;
+
+  if (dist === 0) {
+    /* lc is the unmatched char */
+    s.dyn_ltree[lc * 2]/*.Freq*/++;
+  } else {
+    s.matches++;
+    /* Here, lc is the match length - MIN_MATCH */
+    dist--;             /* dist = match distance - 1 */
+    //Assert((ush)dist < (ush)MAX_DIST(s) &&
+    //       (ush)lc <= (ush)(MAX_MATCH-MIN_MATCH) &&
+    //       (ush)d_code(dist) < (ush)D_CODES,  "_tr_tally: bad match");
+
+    s.dyn_ltree[(_length_code[lc] + LITERALS + 1) * 2]/*.Freq*/++;
+    s.dyn_dtree[d_code(dist) * 2]/*.Freq*/++;
+  }
+
+// (!) This block is disabled in zlib defaults,
+// don't enable it for binary compatibility
+
+//#ifdef TRUNCATE_BLOCK
+//  /* Try to guess if it is profitable to stop the current block here */
+//  if ((s.last_lit & 0x1fff) === 0 && s.level > 2) {
+//    /* Compute an upper bound for the compressed length */
+//    out_length = s.last_lit*8;
+//    in_length = s.strstart - s.block_start;
+//
+//    for (dcode = 0; dcode < D_CODES; dcode++) {
+//      out_length += s.dyn_dtree[dcode*2]/*.Freq*/ * (5 + extra_dbits[dcode]);
+//    }
+//    out_length >>>= 3;
+//    //Tracev((stderr,"\nlast_lit %u, in %ld, out ~%ld(%ld%%) ",
+//    //       s->last_lit, in_length, out_length,
+//    //       100L - out_length*100L/in_length));
+//    if (s.matches < (s.last_lit>>1)/*int /2*/ && out_length < (in_length>>1)/*int /2*/) {
+//      return true;
+//    }
+//  }
+//#endif
+
+  return (s.last_lit === s.lit_bufsize - 1);
+  /* We avoid equality with lit_bufsize because of wraparound at 64K
+   * on 16 bit machines and because stored blocks are restricted to
+   * 64K-1 bytes.
+   */
+}
+
+exports._tr_init  = _tr_init;
+exports._tr_stored_block = _tr_stored_block;
+exports._tr_flush_block  = _tr_flush_block;
+exports._tr_tally = _tr_tally;
+exports._tr_align = _tr_align;
+
+
+/***/ }),
 /* 137 */,
 /* 138 */,
 /* 139 */,
@@ -8402,7 +7357,45 @@ module.exports = from;
 
 /***/ }),
 /* 177 */,
-/* 178 */,
+/* 178 */
+/***/ (function(module) {
+
+"use strict";
+
+
+function escapeRegExp(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
+}
+
+function replaceAll(str, search, replacement) {
+  search = search instanceof RegExp ? search : new RegExp(escapeRegExp(search), 'g');
+
+  return str.replace(search, replacement);
+}
+
+var CleanGitRef = {
+  clean: function clean(value) {
+    if (typeof value !== 'string') {
+      throw new Error('Expected a string, received: ' + value);
+    }
+
+    value = replaceAll(value, './', '/');
+    value = replaceAll(value, '..', '.');
+    value = replaceAll(value, ' ', '-');
+    value = replaceAll(value, /^[~^:?*\\\-]/g, '');
+    value = replaceAll(value, /[~^:?*\\]/g, '-');
+    value = replaceAll(value, /[~^:?*\\\-]$/g, '');
+    value = replaceAll(value, '@{', '-');
+    value = replaceAll(value, /\.$/g, '');
+    value = replaceAll(value, /\/$/g, '');
+    value = replaceAll(value, /\.lock$/g, '');
+    return value;
+  }
+};
+
+module.exports = CleanGitRef;
+
+/***/ }),
 /* 179 */,
 /* 180 */,
 /* 181 */
@@ -9075,7 +8068,7 @@ module.exports = createReadableStreamAsyncIterator;
 
 const {PassThrough: PassThroughStream} = __webpack_require__(413);
 const zlib = __webpack_require__(761);
-const mimicResponse = __webpack_require__(537);
+const mimicResponse = __webpack_require__(903);
 
 const decompressResponse = response => {
 	const contentEncoding = (response.headers['content-encoding'] || '').toLowerCase();
@@ -9188,79 +8181,186 @@ function checkMode (stat, options) {
 /* 199 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
-var common = __webpack_require__(602);
-var fs = __webpack_require__(747);
+"use strict";
 
-common.register('grep', _grep, {
-  globStart: 2, // don't glob-expand the regex
-  canReceivePipe: true,
-  cmdOptions: {
-    'v': 'inverse',
-    'l': 'nameOnly',
-    'i': 'ignoreCase',
+
+const path = __webpack_require__(622);
+const WIN_SLASH = '\\\\/';
+const WIN_NO_SLASH = `[^${WIN_SLASH}]`;
+
+/**
+ * Posix glob regex
+ */
+
+const DOT_LITERAL = '\\.';
+const PLUS_LITERAL = '\\+';
+const QMARK_LITERAL = '\\?';
+const SLASH_LITERAL = '\\/';
+const ONE_CHAR = '(?=.)';
+const QMARK = '[^/]';
+const END_ANCHOR = `(?:${SLASH_LITERAL}|$)`;
+const START_ANCHOR = `(?:^|${SLASH_LITERAL})`;
+const DOTS_SLASH = `${DOT_LITERAL}{1,2}${END_ANCHOR}`;
+const NO_DOT = `(?!${DOT_LITERAL})`;
+const NO_DOTS = `(?!${START_ANCHOR}${DOTS_SLASH})`;
+const NO_DOT_SLASH = `(?!${DOT_LITERAL}{0,1}${END_ANCHOR})`;
+const NO_DOTS_SLASH = `(?!${DOTS_SLASH})`;
+const QMARK_NO_DOT = `[^.${SLASH_LITERAL}]`;
+const STAR = `${QMARK}*?`;
+
+const POSIX_CHARS = {
+  DOT_LITERAL,
+  PLUS_LITERAL,
+  QMARK_LITERAL,
+  SLASH_LITERAL,
+  ONE_CHAR,
+  QMARK,
+  END_ANCHOR,
+  DOTS_SLASH,
+  NO_DOT,
+  NO_DOTS,
+  NO_DOT_SLASH,
+  NO_DOTS_SLASH,
+  QMARK_NO_DOT,
+  STAR,
+  START_ANCHOR
+};
+
+/**
+ * Windows glob regex
+ */
+
+const WINDOWS_CHARS = {
+  ...POSIX_CHARS,
+
+  SLASH_LITERAL: `[${WIN_SLASH}]`,
+  QMARK: WIN_NO_SLASH,
+  STAR: `${WIN_NO_SLASH}*?`,
+  DOTS_SLASH: `${DOT_LITERAL}{1,2}(?:[${WIN_SLASH}]|$)`,
+  NO_DOT: `(?!${DOT_LITERAL})`,
+  NO_DOTS: `(?!(?:^|[${WIN_SLASH}])${DOT_LITERAL}{1,2}(?:[${WIN_SLASH}]|$))`,
+  NO_DOT_SLASH: `(?!${DOT_LITERAL}{0,1}(?:[${WIN_SLASH}]|$))`,
+  NO_DOTS_SLASH: `(?!${DOT_LITERAL}{1,2}(?:[${WIN_SLASH}]|$))`,
+  QMARK_NO_DOT: `[^.${WIN_SLASH}]`,
+  START_ANCHOR: `(?:^|[${WIN_SLASH}])`,
+  END_ANCHOR: `(?:[${WIN_SLASH}]|$)`
+};
+
+/**
+ * POSIX Bracket Regex
+ */
+
+const POSIX_REGEX_SOURCE = {
+  alnum: 'a-zA-Z0-9',
+  alpha: 'a-zA-Z',
+  ascii: '\\x00-\\x7F',
+  blank: ' \\t',
+  cntrl: '\\x00-\\x1F\\x7F',
+  digit: '0-9',
+  graph: '\\x21-\\x7E',
+  lower: 'a-z',
+  print: '\\x20-\\x7E ',
+  punct: '\\-!"#$%&\'()\\*+,./:;<=>?@[\\]^_`{|}~',
+  space: ' \\t\\r\\n\\v\\f',
+  upper: 'A-Z',
+  word: 'A-Za-z0-9_',
+  xdigit: 'A-Fa-f0-9'
+};
+
+module.exports = {
+  MAX_LENGTH: 1024 * 64,
+  POSIX_REGEX_SOURCE,
+
+  // regular expressions
+  REGEX_BACKSLASH: /\\(?![*+?^${}(|)[\]])/g,
+  REGEX_NON_SPECIAL_CHARS: /^[^@![\].,$*+?^{}()|\\/]+/,
+  REGEX_SPECIAL_CHARS: /[-*+?.^${}(|)[\]]/,
+  REGEX_SPECIAL_CHARS_BACKREF: /(\\?)((\W)(\3*))/g,
+  REGEX_SPECIAL_CHARS_GLOBAL: /([-*+?.^${}(|)[\]])/g,
+  REGEX_REMOVE_BACKSLASH: /(?:\[.*?[^\\]\]|\\(?=.))/g,
+
+  // Replace globs with equivalent patterns to reduce parsing time.
+  REPLACEMENTS: {
+    '***': '*',
+    '**/**': '**',
+    '**/**/**': '**'
   },
-});
 
-//@
-//@ ### grep([options,] regex_filter, file [, file ...])
-//@ ### grep([options,] regex_filter, file_array)
-//@
-//@ Available options:
-//@
-//@ + `-v`: Invert `regex_filter` (only print non-matching lines).
-//@ + `-l`: Print only filenames of matching files.
-//@ + `-i`: Ignore case.
-//@
-//@ Examples:
-//@
-//@ ```javascript
-//@ grep('-v', 'GLOBAL_VARIABLE', '*.js');
-//@ grep('GLOBAL_VARIABLE', '*.js');
-//@ ```
-//@
-//@ Reads input string from given files and returns a string containing all lines of the
-//@ file that match the given `regex_filter`.
-function _grep(options, regex, files) {
-  // Check if this is coming from a pipe
-  var pipe = common.readFromPipe();
+  // Digits
+  CHAR_0: 48, /* 0 */
+  CHAR_9: 57, /* 9 */
 
-  if (!files && !pipe) common.error('no paths given', 2);
+  // Alphabet chars.
+  CHAR_UPPERCASE_A: 65, /* A */
+  CHAR_LOWERCASE_A: 97, /* a */
+  CHAR_UPPERCASE_Z: 90, /* Z */
+  CHAR_LOWERCASE_Z: 122, /* z */
 
-  files = [].slice.call(arguments, 2);
+  CHAR_LEFT_PARENTHESES: 40, /* ( */
+  CHAR_RIGHT_PARENTHESES: 41, /* ) */
 
-  if (pipe) {
-    files.unshift('-');
+  CHAR_ASTERISK: 42, /* * */
+
+  // Non-alphabetic chars.
+  CHAR_AMPERSAND: 38, /* & */
+  CHAR_AT: 64, /* @ */
+  CHAR_BACKWARD_SLASH: 92, /* \ */
+  CHAR_CARRIAGE_RETURN: 13, /* \r */
+  CHAR_CIRCUMFLEX_ACCENT: 94, /* ^ */
+  CHAR_COLON: 58, /* : */
+  CHAR_COMMA: 44, /* , */
+  CHAR_DOT: 46, /* . */
+  CHAR_DOUBLE_QUOTE: 34, /* " */
+  CHAR_EQUAL: 61, /* = */
+  CHAR_EXCLAMATION_MARK: 33, /* ! */
+  CHAR_FORM_FEED: 12, /* \f */
+  CHAR_FORWARD_SLASH: 47, /* / */
+  CHAR_GRAVE_ACCENT: 96, /* ` */
+  CHAR_HASH: 35, /* # */
+  CHAR_HYPHEN_MINUS: 45, /* - */
+  CHAR_LEFT_ANGLE_BRACKET: 60, /* < */
+  CHAR_LEFT_CURLY_BRACE: 123, /* { */
+  CHAR_LEFT_SQUARE_BRACKET: 91, /* [ */
+  CHAR_LINE_FEED: 10, /* \n */
+  CHAR_NO_BREAK_SPACE: 160, /* \u00A0 */
+  CHAR_PERCENT: 37, /* % */
+  CHAR_PLUS: 43, /* + */
+  CHAR_QUESTION_MARK: 63, /* ? */
+  CHAR_RIGHT_ANGLE_BRACKET: 62, /* > */
+  CHAR_RIGHT_CURLY_BRACE: 125, /* } */
+  CHAR_RIGHT_SQUARE_BRACKET: 93, /* ] */
+  CHAR_SEMICOLON: 59, /* ; */
+  CHAR_SINGLE_QUOTE: 39, /* ' */
+  CHAR_SPACE: 32, /*   */
+  CHAR_TAB: 9, /* \t */
+  CHAR_UNDERSCORE: 95, /* _ */
+  CHAR_VERTICAL_LINE: 124, /* | */
+  CHAR_ZERO_WIDTH_NOBREAK_SPACE: 65279, /* \uFEFF */
+
+  SEP: path.sep,
+
+  /**
+   * Create EXTGLOB_CHARS
+   */
+
+  extglobChars(chars) {
+    return {
+      '!': { type: 'negate', open: '(?:(?!(?:', close: `))${chars.STAR})` },
+      '?': { type: 'qmark', open: '(?:', close: ')?' },
+      '+': { type: 'plus', open: '(?:', close: ')+' },
+      '*': { type: 'star', open: '(?:', close: ')*' },
+      '@': { type: 'at', open: '(?:', close: ')' }
+    };
+  },
+
+  /**
+   * Create GLOB_CHARS
+   */
+
+  globChars(win32) {
+    return win32 === true ? WINDOWS_CHARS : POSIX_CHARS;
   }
-
-  var grep = [];
-  if (options.ignoreCase) {
-    regex = new RegExp(regex, 'i');
-  }
-  files.forEach(function (file) {
-    if (!fs.existsSync(file) && file !== '-') {
-      common.error('no such file or directory: ' + file, 2, { continue: true });
-      return;
-    }
-
-    var contents = file === '-' ? pipe : fs.readFileSync(file, 'utf8');
-    if (options.nameOnly) {
-      if (contents.match(regex)) {
-        grep.push(file);
-      }
-    } else {
-      var lines = contents.split('\n');
-      lines.forEach(function (line) {
-        var matched = line.match(regex);
-        if ((options.inverse && !matched) || (!options.inverse && matched)) {
-          grep.push(line);
-        }
-      });
-    }
-  });
-
-  return grep.join('\n') + '\n';
-}
-module.exports = _grep;
+};
 
 
 /***/ }),
@@ -9342,7 +8442,48 @@ module.exports = {
 };
 
 /***/ }),
-/* 217 */,
+/* 217 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+var common = __webpack_require__(602);
+var fs = __webpack_require__(747);
+var path = __webpack_require__(622);
+
+common.register('toEnd', _toEnd, {
+  pipeOnly: true,
+  wrapOutput: false,
+});
+
+//@
+//@ ### ShellString.prototype.toEnd(file)
+//@
+//@ Examples:
+//@
+//@ ```javascript
+//@ cat('input.txt').toEnd('output.txt');
+//@ ```
+//@
+//@ Analogous to the redirect-and-append operator `>>` in Unix, but works with
+//@ `ShellStrings` (such as those returned by `cat`, `grep`, etc.).
+function _toEnd(options, file) {
+  if (!file) common.error('wrong arguments');
+
+  if (!fs.existsSync(path.dirname(file))) {
+    common.error('no such file or directory: ' + path.dirname(file));
+  }
+
+  try {
+    fs.appendFileSync(file, this.stdout || this.toString(), 'utf8');
+    return this;
+  } catch (e) {
+    /* istanbul ignore next */
+    common.error('could not append to file (code ' + e.code + '): ' + file, { continue: true });
+  }
+}
+module.exports = _toEnd;
+
+
+/***/ }),
 /* 218 */,
 /* 219 */,
 /* 220 */,
@@ -9362,7 +8503,7 @@ const {
   REGEX_REMOVE_BACKSLASH,
   REGEX_SPECIAL_CHARS,
   REGEX_SPECIAL_CHARS_GLOBAL
-} = __webpack_require__(530);
+} = __webpack_require__(199);
 
 exports.isObject = val => val !== null && typeof val === 'object' && !Array.isArray(val);
 exports.hasRegexChars = str => REGEX_SPECIAL_CHARS.test(str);
@@ -9632,7 +8773,7 @@ var StringDecoder;
 var createReadableStreamAsyncIterator;
 var from;
 
-__webpack_require__(689)(Readable, Stream);
+__webpack_require__(938)(Readable, Stream);
 
 var errorOrDestroy = destroyImpl.errorOrDestroy;
 var kProxyEvents = ['error', 'close', 'destroy', 'pause', 'resume'];
@@ -11011,54 +10152,7 @@ module.exports = parse;
 /***/ }),
 /* 228 */,
 /* 229 */,
-/* 230 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-"use strict";
-
-
-var isGlob = __webpack_require__(486);
-var pathPosixDirname = __webpack_require__(622).posix.dirname;
-var isWin32 = __webpack_require__(87).platform() === 'win32';
-
-var slash = '/';
-var backslash = /\\/g;
-var enclosure = /[\{\[].*[\/]*.*[\}\]]$/;
-var globby = /(^|[^\\])([\{\[]|\([^\)]+$)/;
-var escaped = /\\([\!\*\?\|\[\]\(\)\{\}])/g;
-
-/**
- * @param {string} str
- * @param {Object} opts
- * @param {boolean} [opts.flipBackslashes=true]
- */
-module.exports = function globParent(str, opts) {
-  var options = Object.assign({ flipBackslashes: true }, opts);
-
-  // flip windows path separators
-  if (options.flipBackslashes && isWin32 && str.indexOf(slash) < 0) {
-    str = str.replace(backslash, slash);
-  }
-
-  // special case for strings ending in enclosure containing path separator
-  if (enclosure.test(str)) {
-    str += slash;
-  }
-
-  // preserves full path in case of trailing path separator
-  str += 'a';
-
-  // remove path parts that are globby
-  do {
-    str = pathPosixDirname(str);
-  } while (isGlob(str) || globby.test(str));
-
-  // remove escape chars and return result
-  return str.replace(escaped, '$1');
-};
-
-
-/***/ }),
+/* 230 */,
 /* 231 */
 /***/ (function(__unusedmodule, exports) {
 
@@ -11504,7 +10598,7 @@ var _require$codes = __webpack_require__(38).codes,
 
 var errorOrDestroy = destroyImpl.errorOrDestroy;
 
-__webpack_require__(689)(Writable, Stream);
+__webpack_require__(938)(Writable, Stream);
 
 function nop() {}
 
@@ -13880,35 +12974,1490 @@ exports.utf8border = function (buf, max) {
 
 /***/ }),
 /* 280 */
-/***/ (function(module) {
+/***/ (function(module, exports) {
 
-module.exports = register
+exports = module.exports = SemVer
 
-function register (state, name, method, options) {
-  if (typeof method !== 'function') {
-    throw new Error('method for before hook must be a function')
+var debug
+/* istanbul ignore next */
+if (typeof process === 'object' &&
+    process.env &&
+    process.env.NODE_DEBUG &&
+    /\bsemver\b/i.test(process.env.NODE_DEBUG)) {
+  debug = function () {
+    var args = Array.prototype.slice.call(arguments, 0)
+    args.unshift('SEMVER')
+    console.log.apply(console, args)
+  }
+} else {
+  debug = function () {}
+}
+
+// Note: this is the semver.org version of the spec that it implements
+// Not necessarily the package version of this code.
+exports.SEMVER_SPEC_VERSION = '2.0.0'
+
+var MAX_LENGTH = 256
+var MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER ||
+  /* istanbul ignore next */ 9007199254740991
+
+// Max safe segment length for coercion.
+var MAX_SAFE_COMPONENT_LENGTH = 16
+
+// The actual regexps go on exports.re
+var re = exports.re = []
+var src = exports.src = []
+var R = 0
+
+// The following Regular Expressions can be used for tokenizing,
+// validating, and parsing SemVer version strings.
+
+// ## Numeric Identifier
+// A single `0`, or a non-zero digit followed by zero or more digits.
+
+var NUMERICIDENTIFIER = R++
+src[NUMERICIDENTIFIER] = '0|[1-9]\\d*'
+var NUMERICIDENTIFIERLOOSE = R++
+src[NUMERICIDENTIFIERLOOSE] = '[0-9]+'
+
+// ## Non-numeric Identifier
+// Zero or more digits, followed by a letter or hyphen, and then zero or
+// more letters, digits, or hyphens.
+
+var NONNUMERICIDENTIFIER = R++
+src[NONNUMERICIDENTIFIER] = '\\d*[a-zA-Z-][a-zA-Z0-9-]*'
+
+// ## Main Version
+// Three dot-separated numeric identifiers.
+
+var MAINVERSION = R++
+src[MAINVERSION] = '(' + src[NUMERICIDENTIFIER] + ')\\.' +
+                   '(' + src[NUMERICIDENTIFIER] + ')\\.' +
+                   '(' + src[NUMERICIDENTIFIER] + ')'
+
+var MAINVERSIONLOOSE = R++
+src[MAINVERSIONLOOSE] = '(' + src[NUMERICIDENTIFIERLOOSE] + ')\\.' +
+                        '(' + src[NUMERICIDENTIFIERLOOSE] + ')\\.' +
+                        '(' + src[NUMERICIDENTIFIERLOOSE] + ')'
+
+// ## Pre-release Version Identifier
+// A numeric identifier, or a non-numeric identifier.
+
+var PRERELEASEIDENTIFIER = R++
+src[PRERELEASEIDENTIFIER] = '(?:' + src[NUMERICIDENTIFIER] +
+                            '|' + src[NONNUMERICIDENTIFIER] + ')'
+
+var PRERELEASEIDENTIFIERLOOSE = R++
+src[PRERELEASEIDENTIFIERLOOSE] = '(?:' + src[NUMERICIDENTIFIERLOOSE] +
+                                 '|' + src[NONNUMERICIDENTIFIER] + ')'
+
+// ## Pre-release Version
+// Hyphen, followed by one or more dot-separated pre-release version
+// identifiers.
+
+var PRERELEASE = R++
+src[PRERELEASE] = '(?:-(' + src[PRERELEASEIDENTIFIER] +
+                  '(?:\\.' + src[PRERELEASEIDENTIFIER] + ')*))'
+
+var PRERELEASELOOSE = R++
+src[PRERELEASELOOSE] = '(?:-?(' + src[PRERELEASEIDENTIFIERLOOSE] +
+                       '(?:\\.' + src[PRERELEASEIDENTIFIERLOOSE] + ')*))'
+
+// ## Build Metadata Identifier
+// Any combination of digits, letters, or hyphens.
+
+var BUILDIDENTIFIER = R++
+src[BUILDIDENTIFIER] = '[0-9A-Za-z-]+'
+
+// ## Build Metadata
+// Plus sign, followed by one or more period-separated build metadata
+// identifiers.
+
+var BUILD = R++
+src[BUILD] = '(?:\\+(' + src[BUILDIDENTIFIER] +
+             '(?:\\.' + src[BUILDIDENTIFIER] + ')*))'
+
+// ## Full Version String
+// A main version, followed optionally by a pre-release version and
+// build metadata.
+
+// Note that the only major, minor, patch, and pre-release sections of
+// the version string are capturing groups.  The build metadata is not a
+// capturing group, because it should not ever be used in version
+// comparison.
+
+var FULL = R++
+var FULLPLAIN = 'v?' + src[MAINVERSION] +
+                src[PRERELEASE] + '?' +
+                src[BUILD] + '?'
+
+src[FULL] = '^' + FULLPLAIN + '$'
+
+// like full, but allows v1.2.3 and =1.2.3, which people do sometimes.
+// also, 1.0.0alpha1 (prerelease without the hyphen) which is pretty
+// common in the npm registry.
+var LOOSEPLAIN = '[v=\\s]*' + src[MAINVERSIONLOOSE] +
+                 src[PRERELEASELOOSE] + '?' +
+                 src[BUILD] + '?'
+
+var LOOSE = R++
+src[LOOSE] = '^' + LOOSEPLAIN + '$'
+
+var GTLT = R++
+src[GTLT] = '((?:<|>)?=?)'
+
+// Something like "2.*" or "1.2.x".
+// Note that "x.x" is a valid xRange identifer, meaning "any version"
+// Only the first item is strictly required.
+var XRANGEIDENTIFIERLOOSE = R++
+src[XRANGEIDENTIFIERLOOSE] = src[NUMERICIDENTIFIERLOOSE] + '|x|X|\\*'
+var XRANGEIDENTIFIER = R++
+src[XRANGEIDENTIFIER] = src[NUMERICIDENTIFIER] + '|x|X|\\*'
+
+var XRANGEPLAIN = R++
+src[XRANGEPLAIN] = '[v=\\s]*(' + src[XRANGEIDENTIFIER] + ')' +
+                   '(?:\\.(' + src[XRANGEIDENTIFIER] + ')' +
+                   '(?:\\.(' + src[XRANGEIDENTIFIER] + ')' +
+                   '(?:' + src[PRERELEASE] + ')?' +
+                   src[BUILD] + '?' +
+                   ')?)?'
+
+var XRANGEPLAINLOOSE = R++
+src[XRANGEPLAINLOOSE] = '[v=\\s]*(' + src[XRANGEIDENTIFIERLOOSE] + ')' +
+                        '(?:\\.(' + src[XRANGEIDENTIFIERLOOSE] + ')' +
+                        '(?:\\.(' + src[XRANGEIDENTIFIERLOOSE] + ')' +
+                        '(?:' + src[PRERELEASELOOSE] + ')?' +
+                        src[BUILD] + '?' +
+                        ')?)?'
+
+var XRANGE = R++
+src[XRANGE] = '^' + src[GTLT] + '\\s*' + src[XRANGEPLAIN] + '$'
+var XRANGELOOSE = R++
+src[XRANGELOOSE] = '^' + src[GTLT] + '\\s*' + src[XRANGEPLAINLOOSE] + '$'
+
+// Coercion.
+// Extract anything that could conceivably be a part of a valid semver
+var COERCE = R++
+src[COERCE] = '(?:^|[^\\d])' +
+              '(\\d{1,' + MAX_SAFE_COMPONENT_LENGTH + '})' +
+              '(?:\\.(\\d{1,' + MAX_SAFE_COMPONENT_LENGTH + '}))?' +
+              '(?:\\.(\\d{1,' + MAX_SAFE_COMPONENT_LENGTH + '}))?' +
+              '(?:$|[^\\d])'
+
+// Tilde ranges.
+// Meaning is "reasonably at or greater than"
+var LONETILDE = R++
+src[LONETILDE] = '(?:~>?)'
+
+var TILDETRIM = R++
+src[TILDETRIM] = '(\\s*)' + src[LONETILDE] + '\\s+'
+re[TILDETRIM] = new RegExp(src[TILDETRIM], 'g')
+var tildeTrimReplace = '$1~'
+
+var TILDE = R++
+src[TILDE] = '^' + src[LONETILDE] + src[XRANGEPLAIN] + '$'
+var TILDELOOSE = R++
+src[TILDELOOSE] = '^' + src[LONETILDE] + src[XRANGEPLAINLOOSE] + '$'
+
+// Caret ranges.
+// Meaning is "at least and backwards compatible with"
+var LONECARET = R++
+src[LONECARET] = '(?:\\^)'
+
+var CARETTRIM = R++
+src[CARETTRIM] = '(\\s*)' + src[LONECARET] + '\\s+'
+re[CARETTRIM] = new RegExp(src[CARETTRIM], 'g')
+var caretTrimReplace = '$1^'
+
+var CARET = R++
+src[CARET] = '^' + src[LONECARET] + src[XRANGEPLAIN] + '$'
+var CARETLOOSE = R++
+src[CARETLOOSE] = '^' + src[LONECARET] + src[XRANGEPLAINLOOSE] + '$'
+
+// A simple gt/lt/eq thing, or just "" to indicate "any version"
+var COMPARATORLOOSE = R++
+src[COMPARATORLOOSE] = '^' + src[GTLT] + '\\s*(' + LOOSEPLAIN + ')$|^$'
+var COMPARATOR = R++
+src[COMPARATOR] = '^' + src[GTLT] + '\\s*(' + FULLPLAIN + ')$|^$'
+
+// An expression to strip any whitespace between the gtlt and the thing
+// it modifies, so that `> 1.2.3` ==> `>1.2.3`
+var COMPARATORTRIM = R++
+src[COMPARATORTRIM] = '(\\s*)' + src[GTLT] +
+                      '\\s*(' + LOOSEPLAIN + '|' + src[XRANGEPLAIN] + ')'
+
+// this one has to use the /g flag
+re[COMPARATORTRIM] = new RegExp(src[COMPARATORTRIM], 'g')
+var comparatorTrimReplace = '$1$2$3'
+
+// Something like `1.2.3 - 1.2.4`
+// Note that these all use the loose form, because they'll be
+// checked against either the strict or loose comparator form
+// later.
+var HYPHENRANGE = R++
+src[HYPHENRANGE] = '^\\s*(' + src[XRANGEPLAIN] + ')' +
+                   '\\s+-\\s+' +
+                   '(' + src[XRANGEPLAIN] + ')' +
+                   '\\s*$'
+
+var HYPHENRANGELOOSE = R++
+src[HYPHENRANGELOOSE] = '^\\s*(' + src[XRANGEPLAINLOOSE] + ')' +
+                        '\\s+-\\s+' +
+                        '(' + src[XRANGEPLAINLOOSE] + ')' +
+                        '\\s*$'
+
+// Star ranges basically just allow anything at all.
+var STAR = R++
+src[STAR] = '(<|>)?=?\\s*\\*'
+
+// Compile to actual regexp objects.
+// All are flag-free, unless they were created above with a flag.
+for (var i = 0; i < R; i++) {
+  debug(i, src[i])
+  if (!re[i]) {
+    re[i] = new RegExp(src[i])
+  }
+}
+
+exports.parse = parse
+function parse (version, options) {
+  if (!options || typeof options !== 'object') {
+    options = {
+      loose: !!options,
+      includePrerelease: false
+    }
   }
 
-  if (!options) {
-    options = {}
+  if (version instanceof SemVer) {
+    return version
   }
 
-  if (Array.isArray(name)) {
-    return name.reverse().reduce(function (callback, name) {
-      return register.bind(null, state, name, callback, options)
-    }, method)()
+  if (typeof version !== 'string') {
+    return null
   }
 
-  return Promise.resolve()
-    .then(function () {
-      if (!state.registry[name]) {
-        return method(options)
+  if (version.length > MAX_LENGTH) {
+    return null
+  }
+
+  var r = options.loose ? re[LOOSE] : re[FULL]
+  if (!r.test(version)) {
+    return null
+  }
+
+  try {
+    return new SemVer(version, options)
+  } catch (er) {
+    return null
+  }
+}
+
+exports.valid = valid
+function valid (version, options) {
+  var v = parse(version, options)
+  return v ? v.version : null
+}
+
+exports.clean = clean
+function clean (version, options) {
+  var s = parse(version.trim().replace(/^[=v]+/, ''), options)
+  return s ? s.version : null
+}
+
+exports.SemVer = SemVer
+
+function SemVer (version, options) {
+  if (!options || typeof options !== 'object') {
+    options = {
+      loose: !!options,
+      includePrerelease: false
+    }
+  }
+  if (version instanceof SemVer) {
+    if (version.loose === options.loose) {
+      return version
+    } else {
+      version = version.version
+    }
+  } else if (typeof version !== 'string') {
+    throw new TypeError('Invalid Version: ' + version)
+  }
+
+  if (version.length > MAX_LENGTH) {
+    throw new TypeError('version is longer than ' + MAX_LENGTH + ' characters')
+  }
+
+  if (!(this instanceof SemVer)) {
+    return new SemVer(version, options)
+  }
+
+  debug('SemVer', version, options)
+  this.options = options
+  this.loose = !!options.loose
+
+  var m = version.trim().match(options.loose ? re[LOOSE] : re[FULL])
+
+  if (!m) {
+    throw new TypeError('Invalid Version: ' + version)
+  }
+
+  this.raw = version
+
+  // these are actually numbers
+  this.major = +m[1]
+  this.minor = +m[2]
+  this.patch = +m[3]
+
+  if (this.major > MAX_SAFE_INTEGER || this.major < 0) {
+    throw new TypeError('Invalid major version')
+  }
+
+  if (this.minor > MAX_SAFE_INTEGER || this.minor < 0) {
+    throw new TypeError('Invalid minor version')
+  }
+
+  if (this.patch > MAX_SAFE_INTEGER || this.patch < 0) {
+    throw new TypeError('Invalid patch version')
+  }
+
+  // numberify any prerelease numeric ids
+  if (!m[4]) {
+    this.prerelease = []
+  } else {
+    this.prerelease = m[4].split('.').map(function (id) {
+      if (/^[0-9]+$/.test(id)) {
+        var num = +id
+        if (num >= 0 && num < MAX_SAFE_INTEGER) {
+          return num
+        }
+      }
+      return id
+    })
+  }
+
+  this.build = m[5] ? m[5].split('.') : []
+  this.format()
+}
+
+SemVer.prototype.format = function () {
+  this.version = this.major + '.' + this.minor + '.' + this.patch
+  if (this.prerelease.length) {
+    this.version += '-' + this.prerelease.join('.')
+  }
+  return this.version
+}
+
+SemVer.prototype.toString = function () {
+  return this.version
+}
+
+SemVer.prototype.compare = function (other) {
+  debug('SemVer.compare', this.version, this.options, other)
+  if (!(other instanceof SemVer)) {
+    other = new SemVer(other, this.options)
+  }
+
+  return this.compareMain(other) || this.comparePre(other)
+}
+
+SemVer.prototype.compareMain = function (other) {
+  if (!(other instanceof SemVer)) {
+    other = new SemVer(other, this.options)
+  }
+
+  return compareIdentifiers(this.major, other.major) ||
+         compareIdentifiers(this.minor, other.minor) ||
+         compareIdentifiers(this.patch, other.patch)
+}
+
+SemVer.prototype.comparePre = function (other) {
+  if (!(other instanceof SemVer)) {
+    other = new SemVer(other, this.options)
+  }
+
+  // NOT having a prerelease is > having one
+  if (this.prerelease.length && !other.prerelease.length) {
+    return -1
+  } else if (!this.prerelease.length && other.prerelease.length) {
+    return 1
+  } else if (!this.prerelease.length && !other.prerelease.length) {
+    return 0
+  }
+
+  var i = 0
+  do {
+    var a = this.prerelease[i]
+    var b = other.prerelease[i]
+    debug('prerelease compare', i, a, b)
+    if (a === undefined && b === undefined) {
+      return 0
+    } else if (b === undefined) {
+      return 1
+    } else if (a === undefined) {
+      return -1
+    } else if (a === b) {
+      continue
+    } else {
+      return compareIdentifiers(a, b)
+    }
+  } while (++i)
+}
+
+// preminor will bump the version up to the next minor release, and immediately
+// down to pre-release. premajor and prepatch work the same way.
+SemVer.prototype.inc = function (release, identifier) {
+  switch (release) {
+    case 'premajor':
+      this.prerelease.length = 0
+      this.patch = 0
+      this.minor = 0
+      this.major++
+      this.inc('pre', identifier)
+      break
+    case 'preminor':
+      this.prerelease.length = 0
+      this.patch = 0
+      this.minor++
+      this.inc('pre', identifier)
+      break
+    case 'prepatch':
+      // If this is already a prerelease, it will bump to the next version
+      // drop any prereleases that might already exist, since they are not
+      // relevant at this point.
+      this.prerelease.length = 0
+      this.inc('patch', identifier)
+      this.inc('pre', identifier)
+      break
+    // If the input is a non-prerelease version, this acts the same as
+    // prepatch.
+    case 'prerelease':
+      if (this.prerelease.length === 0) {
+        this.inc('patch', identifier)
+      }
+      this.inc('pre', identifier)
+      break
+
+    case 'major':
+      // If this is a pre-major version, bump up to the same major version.
+      // Otherwise increment major.
+      // 1.0.0-5 bumps to 1.0.0
+      // 1.1.0 bumps to 2.0.0
+      if (this.minor !== 0 ||
+          this.patch !== 0 ||
+          this.prerelease.length === 0) {
+        this.major++
+      }
+      this.minor = 0
+      this.patch = 0
+      this.prerelease = []
+      break
+    case 'minor':
+      // If this is a pre-minor version, bump up to the same minor version.
+      // Otherwise increment minor.
+      // 1.2.0-5 bumps to 1.2.0
+      // 1.2.1 bumps to 1.3.0
+      if (this.patch !== 0 || this.prerelease.length === 0) {
+        this.minor++
+      }
+      this.patch = 0
+      this.prerelease = []
+      break
+    case 'patch':
+      // If this is not a pre-release version, it will increment the patch.
+      // If it is a pre-release it will bump up to the same patch version.
+      // 1.2.0-5 patches to 1.2.0
+      // 1.2.0 patches to 1.2.1
+      if (this.prerelease.length === 0) {
+        this.patch++
+      }
+      this.prerelease = []
+      break
+    // This probably shouldn't be used publicly.
+    // 1.0.0 "pre" would become 1.0.0-0 which is the wrong direction.
+    case 'pre':
+      if (this.prerelease.length === 0) {
+        this.prerelease = [0]
+      } else {
+        var i = this.prerelease.length
+        while (--i >= 0) {
+          if (typeof this.prerelease[i] === 'number') {
+            this.prerelease[i]++
+            i = -2
+          }
+        }
+        if (i === -1) {
+          // didn't increment anything
+          this.prerelease.push(0)
+        }
+      }
+      if (identifier) {
+        // 1.2.0-beta.1 bumps to 1.2.0-beta.2,
+        // 1.2.0-beta.fooblz or 1.2.0-beta bumps to 1.2.0-beta.0
+        if (this.prerelease[0] === identifier) {
+          if (isNaN(this.prerelease[1])) {
+            this.prerelease = [identifier, 0]
+          }
+        } else {
+          this.prerelease = [identifier, 0]
+        }
+      }
+      break
+
+    default:
+      throw new Error('invalid increment argument: ' + release)
+  }
+  this.format()
+  this.raw = this.version
+  return this
+}
+
+exports.inc = inc
+function inc (version, release, loose, identifier) {
+  if (typeof (loose) === 'string') {
+    identifier = loose
+    loose = undefined
+  }
+
+  try {
+    return new SemVer(version, loose).inc(release, identifier).version
+  } catch (er) {
+    return null
+  }
+}
+
+exports.diff = diff
+function diff (version1, version2) {
+  if (eq(version1, version2)) {
+    return null
+  } else {
+    var v1 = parse(version1)
+    var v2 = parse(version2)
+    var prefix = ''
+    if (v1.prerelease.length || v2.prerelease.length) {
+      prefix = 'pre'
+      var defaultResult = 'prerelease'
+    }
+    for (var key in v1) {
+      if (key === 'major' || key === 'minor' || key === 'patch') {
+        if (v1[key] !== v2[key]) {
+          return prefix + key
+        }
+      }
+    }
+    return defaultResult // may be undefined
+  }
+}
+
+exports.compareIdentifiers = compareIdentifiers
+
+var numeric = /^[0-9]+$/
+function compareIdentifiers (a, b) {
+  var anum = numeric.test(a)
+  var bnum = numeric.test(b)
+
+  if (anum && bnum) {
+    a = +a
+    b = +b
+  }
+
+  return a === b ? 0
+    : (anum && !bnum) ? -1
+    : (bnum && !anum) ? 1
+    : a < b ? -1
+    : 1
+}
+
+exports.rcompareIdentifiers = rcompareIdentifiers
+function rcompareIdentifiers (a, b) {
+  return compareIdentifiers(b, a)
+}
+
+exports.major = major
+function major (a, loose) {
+  return new SemVer(a, loose).major
+}
+
+exports.minor = minor
+function minor (a, loose) {
+  return new SemVer(a, loose).minor
+}
+
+exports.patch = patch
+function patch (a, loose) {
+  return new SemVer(a, loose).patch
+}
+
+exports.compare = compare
+function compare (a, b, loose) {
+  return new SemVer(a, loose).compare(new SemVer(b, loose))
+}
+
+exports.compareLoose = compareLoose
+function compareLoose (a, b) {
+  return compare(a, b, true)
+}
+
+exports.rcompare = rcompare
+function rcompare (a, b, loose) {
+  return compare(b, a, loose)
+}
+
+exports.sort = sort
+function sort (list, loose) {
+  return list.sort(function (a, b) {
+    return exports.compare(a, b, loose)
+  })
+}
+
+exports.rsort = rsort
+function rsort (list, loose) {
+  return list.sort(function (a, b) {
+    return exports.rcompare(a, b, loose)
+  })
+}
+
+exports.gt = gt
+function gt (a, b, loose) {
+  return compare(a, b, loose) > 0
+}
+
+exports.lt = lt
+function lt (a, b, loose) {
+  return compare(a, b, loose) < 0
+}
+
+exports.eq = eq
+function eq (a, b, loose) {
+  return compare(a, b, loose) === 0
+}
+
+exports.neq = neq
+function neq (a, b, loose) {
+  return compare(a, b, loose) !== 0
+}
+
+exports.gte = gte
+function gte (a, b, loose) {
+  return compare(a, b, loose) >= 0
+}
+
+exports.lte = lte
+function lte (a, b, loose) {
+  return compare(a, b, loose) <= 0
+}
+
+exports.cmp = cmp
+function cmp (a, op, b, loose) {
+  switch (op) {
+    case '===':
+      if (typeof a === 'object')
+        a = a.version
+      if (typeof b === 'object')
+        b = b.version
+      return a === b
+
+    case '!==':
+      if (typeof a === 'object')
+        a = a.version
+      if (typeof b === 'object')
+        b = b.version
+      return a !== b
+
+    case '':
+    case '=':
+    case '==':
+      return eq(a, b, loose)
+
+    case '!=':
+      return neq(a, b, loose)
+
+    case '>':
+      return gt(a, b, loose)
+
+    case '>=':
+      return gte(a, b, loose)
+
+    case '<':
+      return lt(a, b, loose)
+
+    case '<=':
+      return lte(a, b, loose)
+
+    default:
+      throw new TypeError('Invalid operator: ' + op)
+  }
+}
+
+exports.Comparator = Comparator
+function Comparator (comp, options) {
+  if (!options || typeof options !== 'object') {
+    options = {
+      loose: !!options,
+      includePrerelease: false
+    }
+  }
+
+  if (comp instanceof Comparator) {
+    if (comp.loose === !!options.loose) {
+      return comp
+    } else {
+      comp = comp.value
+    }
+  }
+
+  if (!(this instanceof Comparator)) {
+    return new Comparator(comp, options)
+  }
+
+  debug('comparator', comp, options)
+  this.options = options
+  this.loose = !!options.loose
+  this.parse(comp)
+
+  if (this.semver === ANY) {
+    this.value = ''
+  } else {
+    this.value = this.operator + this.semver.version
+  }
+
+  debug('comp', this)
+}
+
+var ANY = {}
+Comparator.prototype.parse = function (comp) {
+  var r = this.options.loose ? re[COMPARATORLOOSE] : re[COMPARATOR]
+  var m = comp.match(r)
+
+  if (!m) {
+    throw new TypeError('Invalid comparator: ' + comp)
+  }
+
+  this.operator = m[1]
+  if (this.operator === '=') {
+    this.operator = ''
+  }
+
+  // if it literally is just '>' or '' then allow anything.
+  if (!m[2]) {
+    this.semver = ANY
+  } else {
+    this.semver = new SemVer(m[2], this.options.loose)
+  }
+}
+
+Comparator.prototype.toString = function () {
+  return this.value
+}
+
+Comparator.prototype.test = function (version) {
+  debug('Comparator.test', version, this.options.loose)
+
+  if (this.semver === ANY) {
+    return true
+  }
+
+  if (typeof version === 'string') {
+    version = new SemVer(version, this.options)
+  }
+
+  return cmp(version, this.operator, this.semver, this.options)
+}
+
+Comparator.prototype.intersects = function (comp, options) {
+  if (!(comp instanceof Comparator)) {
+    throw new TypeError('a Comparator is required')
+  }
+
+  if (!options || typeof options !== 'object') {
+    options = {
+      loose: !!options,
+      includePrerelease: false
+    }
+  }
+
+  var rangeTmp
+
+  if (this.operator === '') {
+    rangeTmp = new Range(comp.value, options)
+    return satisfies(this.value, rangeTmp, options)
+  } else if (comp.operator === '') {
+    rangeTmp = new Range(this.value, options)
+    return satisfies(comp.semver, rangeTmp, options)
+  }
+
+  var sameDirectionIncreasing =
+    (this.operator === '>=' || this.operator === '>') &&
+    (comp.operator === '>=' || comp.operator === '>')
+  var sameDirectionDecreasing =
+    (this.operator === '<=' || this.operator === '<') &&
+    (comp.operator === '<=' || comp.operator === '<')
+  var sameSemVer = this.semver.version === comp.semver.version
+  var differentDirectionsInclusive =
+    (this.operator === '>=' || this.operator === '<=') &&
+    (comp.operator === '>=' || comp.operator === '<=')
+  var oppositeDirectionsLessThan =
+    cmp(this.semver, '<', comp.semver, options) &&
+    ((this.operator === '>=' || this.operator === '>') &&
+    (comp.operator === '<=' || comp.operator === '<'))
+  var oppositeDirectionsGreaterThan =
+    cmp(this.semver, '>', comp.semver, options) &&
+    ((this.operator === '<=' || this.operator === '<') &&
+    (comp.operator === '>=' || comp.operator === '>'))
+
+  return sameDirectionIncreasing || sameDirectionDecreasing ||
+    (sameSemVer && differentDirectionsInclusive) ||
+    oppositeDirectionsLessThan || oppositeDirectionsGreaterThan
+}
+
+exports.Range = Range
+function Range (range, options) {
+  if (!options || typeof options !== 'object') {
+    options = {
+      loose: !!options,
+      includePrerelease: false
+    }
+  }
+
+  if (range instanceof Range) {
+    if (range.loose === !!options.loose &&
+        range.includePrerelease === !!options.includePrerelease) {
+      return range
+    } else {
+      return new Range(range.raw, options)
+    }
+  }
+
+  if (range instanceof Comparator) {
+    return new Range(range.value, options)
+  }
+
+  if (!(this instanceof Range)) {
+    return new Range(range, options)
+  }
+
+  this.options = options
+  this.loose = !!options.loose
+  this.includePrerelease = !!options.includePrerelease
+
+  // First, split based on boolean or ||
+  this.raw = range
+  this.set = range.split(/\s*\|\|\s*/).map(function (range) {
+    return this.parseRange(range.trim())
+  }, this).filter(function (c) {
+    // throw out any that are not relevant for whatever reason
+    return c.length
+  })
+
+  if (!this.set.length) {
+    throw new TypeError('Invalid SemVer Range: ' + range)
+  }
+
+  this.format()
+}
+
+Range.prototype.format = function () {
+  this.range = this.set.map(function (comps) {
+    return comps.join(' ').trim()
+  }).join('||').trim()
+  return this.range
+}
+
+Range.prototype.toString = function () {
+  return this.range
+}
+
+Range.prototype.parseRange = function (range) {
+  var loose = this.options.loose
+  range = range.trim()
+  // `1.2.3 - 1.2.4` => `>=1.2.3 <=1.2.4`
+  var hr = loose ? re[HYPHENRANGELOOSE] : re[HYPHENRANGE]
+  range = range.replace(hr, hyphenReplace)
+  debug('hyphen replace', range)
+  // `> 1.2.3 < 1.2.5` => `>1.2.3 <1.2.5`
+  range = range.replace(re[COMPARATORTRIM], comparatorTrimReplace)
+  debug('comparator trim', range, re[COMPARATORTRIM])
+
+  // `~ 1.2.3` => `~1.2.3`
+  range = range.replace(re[TILDETRIM], tildeTrimReplace)
+
+  // `^ 1.2.3` => `^1.2.3`
+  range = range.replace(re[CARETTRIM], caretTrimReplace)
+
+  // normalize spaces
+  range = range.split(/\s+/).join(' ')
+
+  // At this point, the range is completely trimmed and
+  // ready to be split into comparators.
+
+  var compRe = loose ? re[COMPARATORLOOSE] : re[COMPARATOR]
+  var set = range.split(' ').map(function (comp) {
+    return parseComparator(comp, this.options)
+  }, this).join(' ').split(/\s+/)
+  if (this.options.loose) {
+    // in loose mode, throw out any that are not valid comparators
+    set = set.filter(function (comp) {
+      return !!comp.match(compRe)
+    })
+  }
+  set = set.map(function (comp) {
+    return new Comparator(comp, this.options)
+  }, this)
+
+  return set
+}
+
+Range.prototype.intersects = function (range, options) {
+  if (!(range instanceof Range)) {
+    throw new TypeError('a Range is required')
+  }
+
+  return this.set.some(function (thisComparators) {
+    return thisComparators.every(function (thisComparator) {
+      return range.set.some(function (rangeComparators) {
+        return rangeComparators.every(function (rangeComparator) {
+          return thisComparator.intersects(rangeComparator, options)
+        })
+      })
+    })
+  })
+}
+
+// Mostly just for testing and legacy API reasons
+exports.toComparators = toComparators
+function toComparators (range, options) {
+  return new Range(range, options).set.map(function (comp) {
+    return comp.map(function (c) {
+      return c.value
+    }).join(' ').trim().split(' ')
+  })
+}
+
+// comprised of xranges, tildes, stars, and gtlt's at this point.
+// already replaced the hyphen ranges
+// turn into a set of JUST comparators.
+function parseComparator (comp, options) {
+  debug('comp', comp, options)
+  comp = replaceCarets(comp, options)
+  debug('caret', comp)
+  comp = replaceTildes(comp, options)
+  debug('tildes', comp)
+  comp = replaceXRanges(comp, options)
+  debug('xrange', comp)
+  comp = replaceStars(comp, options)
+  debug('stars', comp)
+  return comp
+}
+
+function isX (id) {
+  return !id || id.toLowerCase() === 'x' || id === '*'
+}
+
+// ~, ~> --> * (any, kinda silly)
+// ~2, ~2.x, ~2.x.x, ~>2, ~>2.x ~>2.x.x --> >=2.0.0 <3.0.0
+// ~2.0, ~2.0.x, ~>2.0, ~>2.0.x --> >=2.0.0 <2.1.0
+// ~1.2, ~1.2.x, ~>1.2, ~>1.2.x --> >=1.2.0 <1.3.0
+// ~1.2.3, ~>1.2.3 --> >=1.2.3 <1.3.0
+// ~1.2.0, ~>1.2.0 --> >=1.2.0 <1.3.0
+function replaceTildes (comp, options) {
+  return comp.trim().split(/\s+/).map(function (comp) {
+    return replaceTilde(comp, options)
+  }).join(' ')
+}
+
+function replaceTilde (comp, options) {
+  var r = options.loose ? re[TILDELOOSE] : re[TILDE]
+  return comp.replace(r, function (_, M, m, p, pr) {
+    debug('tilde', comp, _, M, m, p, pr)
+    var ret
+
+    if (isX(M)) {
+      ret = ''
+    } else if (isX(m)) {
+      ret = '>=' + M + '.0.0 <' + (+M + 1) + '.0.0'
+    } else if (isX(p)) {
+      // ~1.2 == >=1.2.0 <1.3.0
+      ret = '>=' + M + '.' + m + '.0 <' + M + '.' + (+m + 1) + '.0'
+    } else if (pr) {
+      debug('replaceTilde pr', pr)
+      ret = '>=' + M + '.' + m + '.' + p + '-' + pr +
+            ' <' + M + '.' + (+m + 1) + '.0'
+    } else {
+      // ~1.2.3 == >=1.2.3 <1.3.0
+      ret = '>=' + M + '.' + m + '.' + p +
+            ' <' + M + '.' + (+m + 1) + '.0'
+    }
+
+    debug('tilde return', ret)
+    return ret
+  })
+}
+
+// ^ --> * (any, kinda silly)
+// ^2, ^2.x, ^2.x.x --> >=2.0.0 <3.0.0
+// ^2.0, ^2.0.x --> >=2.0.0 <3.0.0
+// ^1.2, ^1.2.x --> >=1.2.0 <2.0.0
+// ^1.2.3 --> >=1.2.3 <2.0.0
+// ^1.2.0 --> >=1.2.0 <2.0.0
+function replaceCarets (comp, options) {
+  return comp.trim().split(/\s+/).map(function (comp) {
+    return replaceCaret(comp, options)
+  }).join(' ')
+}
+
+function replaceCaret (comp, options) {
+  debug('caret', comp, options)
+  var r = options.loose ? re[CARETLOOSE] : re[CARET]
+  return comp.replace(r, function (_, M, m, p, pr) {
+    debug('caret', comp, _, M, m, p, pr)
+    var ret
+
+    if (isX(M)) {
+      ret = ''
+    } else if (isX(m)) {
+      ret = '>=' + M + '.0.0 <' + (+M + 1) + '.0.0'
+    } else if (isX(p)) {
+      if (M === '0') {
+        ret = '>=' + M + '.' + m + '.0 <' + M + '.' + (+m + 1) + '.0'
+      } else {
+        ret = '>=' + M + '.' + m + '.0 <' + (+M + 1) + '.0.0'
+      }
+    } else if (pr) {
+      debug('replaceCaret pr', pr)
+      if (M === '0') {
+        if (m === '0') {
+          ret = '>=' + M + '.' + m + '.' + p + '-' + pr +
+                ' <' + M + '.' + m + '.' + (+p + 1)
+        } else {
+          ret = '>=' + M + '.' + m + '.' + p + '-' + pr +
+                ' <' + M + '.' + (+m + 1) + '.0'
+        }
+      } else {
+        ret = '>=' + M + '.' + m + '.' + p + '-' + pr +
+              ' <' + (+M + 1) + '.0.0'
+      }
+    } else {
+      debug('no pr')
+      if (M === '0') {
+        if (m === '0') {
+          ret = '>=' + M + '.' + m + '.' + p +
+                ' <' + M + '.' + m + '.' + (+p + 1)
+        } else {
+          ret = '>=' + M + '.' + m + '.' + p +
+                ' <' + M + '.' + (+m + 1) + '.0'
+        }
+      } else {
+        ret = '>=' + M + '.' + m + '.' + p +
+              ' <' + (+M + 1) + '.0.0'
+      }
+    }
+
+    debug('caret return', ret)
+    return ret
+  })
+}
+
+function replaceXRanges (comp, options) {
+  debug('replaceXRanges', comp, options)
+  return comp.split(/\s+/).map(function (comp) {
+    return replaceXRange(comp, options)
+  }).join(' ')
+}
+
+function replaceXRange (comp, options) {
+  comp = comp.trim()
+  var r = options.loose ? re[XRANGELOOSE] : re[XRANGE]
+  return comp.replace(r, function (ret, gtlt, M, m, p, pr) {
+    debug('xRange', comp, ret, gtlt, M, m, p, pr)
+    var xM = isX(M)
+    var xm = xM || isX(m)
+    var xp = xm || isX(p)
+    var anyX = xp
+
+    if (gtlt === '=' && anyX) {
+      gtlt = ''
+    }
+
+    if (xM) {
+      if (gtlt === '>' || gtlt === '<') {
+        // nothing is allowed
+        ret = '<0.0.0'
+      } else {
+        // nothing is forbidden
+        ret = '*'
+      }
+    } else if (gtlt && anyX) {
+      // we know patch is an x, because we have any x at all.
+      // replace X with 0
+      if (xm) {
+        m = 0
+      }
+      p = 0
+
+      if (gtlt === '>') {
+        // >1 => >=2.0.0
+        // >1.2 => >=1.3.0
+        // >1.2.3 => >= 1.2.4
+        gtlt = '>='
+        if (xm) {
+          M = +M + 1
+          m = 0
+          p = 0
+        } else {
+          m = +m + 1
+          p = 0
+        }
+      } else if (gtlt === '<=') {
+        // <=0.7.x is actually <0.8.0, since any 0.7.x should
+        // pass.  Similarly, <=7.x is actually <8.0.0, etc.
+        gtlt = '<'
+        if (xm) {
+          M = +M + 1
+        } else {
+          m = +m + 1
+        }
       }
 
-      return (state.registry[name]).reduce(function (method, registered) {
-        return registered.hook.bind(null, method, options)
-      }, method)()
+      ret = gtlt + M + '.' + m + '.' + p
+    } else if (xm) {
+      ret = '>=' + M + '.0.0 <' + (+M + 1) + '.0.0'
+    } else if (xp) {
+      ret = '>=' + M + '.' + m + '.0 <' + M + '.' + (+m + 1) + '.0'
+    }
+
+    debug('xRange return', ret)
+
+    return ret
+  })
+}
+
+// Because * is AND-ed with everything else in the comparator,
+// and '' means "any version", just remove the *s entirely.
+function replaceStars (comp, options) {
+  debug('replaceStars', comp, options)
+  // Looseness is ignored here.  star is always as loose as it gets!
+  return comp.trim().replace(re[STAR], '')
+}
+
+// This function is passed to string.replace(re[HYPHENRANGE])
+// M, m, patch, prerelease, build
+// 1.2 - 3.4.5 => >=1.2.0 <=3.4.5
+// 1.2.3 - 3.4 => >=1.2.0 <3.5.0 Any 3.4.x will do
+// 1.2 - 3.4 => >=1.2.0 <3.5.0
+function hyphenReplace ($0,
+  from, fM, fm, fp, fpr, fb,
+  to, tM, tm, tp, tpr, tb) {
+  if (isX(fM)) {
+    from = ''
+  } else if (isX(fm)) {
+    from = '>=' + fM + '.0.0'
+  } else if (isX(fp)) {
+    from = '>=' + fM + '.' + fm + '.0'
+  } else {
+    from = '>=' + from
+  }
+
+  if (isX(tM)) {
+    to = ''
+  } else if (isX(tm)) {
+    to = '<' + (+tM + 1) + '.0.0'
+  } else if (isX(tp)) {
+    to = '<' + tM + '.' + (+tm + 1) + '.0'
+  } else if (tpr) {
+    to = '<=' + tM + '.' + tm + '.' + tp + '-' + tpr
+  } else {
+    to = '<=' + to
+  }
+
+  return (from + ' ' + to).trim()
+}
+
+// if ANY of the sets match ALL of its comparators, then pass
+Range.prototype.test = function (version) {
+  if (!version) {
+    return false
+  }
+
+  if (typeof version === 'string') {
+    version = new SemVer(version, this.options)
+  }
+
+  for (var i = 0; i < this.set.length; i++) {
+    if (testSet(this.set[i], version, this.options)) {
+      return true
+    }
+  }
+  return false
+}
+
+function testSet (set, version, options) {
+  for (var i = 0; i < set.length; i++) {
+    if (!set[i].test(version)) {
+      return false
+    }
+  }
+
+  if (version.prerelease.length && !options.includePrerelease) {
+    // Find the set of versions that are allowed to have prereleases
+    // For example, ^1.2.3-pr.1 desugars to >=1.2.3-pr.1 <2.0.0
+    // That should allow `1.2.3-pr.2` to pass.
+    // However, `1.2.4-alpha.notready` should NOT be allowed,
+    // even though it's within the range set by the comparators.
+    for (i = 0; i < set.length; i++) {
+      debug(set[i].semver)
+      if (set[i].semver === ANY) {
+        continue
+      }
+
+      if (set[i].semver.prerelease.length > 0) {
+        var allowed = set[i].semver
+        if (allowed.major === version.major &&
+            allowed.minor === version.minor &&
+            allowed.patch === version.patch) {
+          return true
+        }
+      }
+    }
+
+    // Version has a -pre, but it's not one of the ones we like.
+    return false
+  }
+
+  return true
+}
+
+exports.satisfies = satisfies
+function satisfies (version, range, options) {
+  try {
+    range = new Range(range, options)
+  } catch (er) {
+    return false
+  }
+  return range.test(version)
+}
+
+exports.maxSatisfying = maxSatisfying
+function maxSatisfying (versions, range, options) {
+  var max = null
+  var maxSV = null
+  try {
+    var rangeObj = new Range(range, options)
+  } catch (er) {
+    return null
+  }
+  versions.forEach(function (v) {
+    if (rangeObj.test(v)) {
+      // satisfies(v, range, options)
+      if (!max || maxSV.compare(v) === -1) {
+        // compare(max, v, true)
+        max = v
+        maxSV = new SemVer(max, options)
+      }
+    }
+  })
+  return max
+}
+
+exports.minSatisfying = minSatisfying
+function minSatisfying (versions, range, options) {
+  var min = null
+  var minSV = null
+  try {
+    var rangeObj = new Range(range, options)
+  } catch (er) {
+    return null
+  }
+  versions.forEach(function (v) {
+    if (rangeObj.test(v)) {
+      // satisfies(v, range, options)
+      if (!min || minSV.compare(v) === 1) {
+        // compare(min, v, true)
+        min = v
+        minSV = new SemVer(min, options)
+      }
+    }
+  })
+  return min
+}
+
+exports.minVersion = minVersion
+function minVersion (range, loose) {
+  range = new Range(range, loose)
+
+  var minver = new SemVer('0.0.0')
+  if (range.test(minver)) {
+    return minver
+  }
+
+  minver = new SemVer('0.0.0-0')
+  if (range.test(minver)) {
+    return minver
+  }
+
+  minver = null
+  for (var i = 0; i < range.set.length; ++i) {
+    var comparators = range.set[i]
+
+    comparators.forEach(function (comparator) {
+      // Clone to avoid manipulating the comparator's semver object.
+      var compver = new SemVer(comparator.semver.version)
+      switch (comparator.operator) {
+        case '>':
+          if (compver.prerelease.length === 0) {
+            compver.patch++
+          } else {
+            compver.prerelease.push(0)
+          }
+          compver.raw = compver.format()
+          /* fallthrough */
+        case '':
+        case '>=':
+          if (!minver || gt(minver, compver)) {
+            minver = compver
+          }
+          break
+        case '<':
+        case '<=':
+          /* Ignore maximum versions */
+          break
+        /* istanbul ignore next */
+        default:
+          throw new Error('Unexpected operation: ' + comparator.operator)
+      }
     })
+  }
+
+  if (minver && range.test(minver)) {
+    return minver
+  }
+
+  return null
+}
+
+exports.validRange = validRange
+function validRange (range, options) {
+  try {
+    // Return '*' instead of '' so that truthiness works.
+    // This will throw if it's invalid anyway
+    return new Range(range, options).range || '*'
+  } catch (er) {
+    return null
+  }
+}
+
+// Determine if version is less than all the versions possible in the range
+exports.ltr = ltr
+function ltr (version, range, options) {
+  return outside(version, range, '<', options)
+}
+
+// Determine if version is greater than all the versions possible in the range.
+exports.gtr = gtr
+function gtr (version, range, options) {
+  return outside(version, range, '>', options)
+}
+
+exports.outside = outside
+function outside (version, range, hilo, options) {
+  version = new SemVer(version, options)
+  range = new Range(range, options)
+
+  var gtfn, ltefn, ltfn, comp, ecomp
+  switch (hilo) {
+    case '>':
+      gtfn = gt
+      ltefn = lte
+      ltfn = lt
+      comp = '>'
+      ecomp = '>='
+      break
+    case '<':
+      gtfn = lt
+      ltefn = gte
+      ltfn = gt
+      comp = '<'
+      ecomp = '<='
+      break
+    default:
+      throw new TypeError('Must provide a hilo val of "<" or ">"')
+  }
+
+  // If it satisifes the range it is not outside
+  if (satisfies(version, range, options)) {
+    return false
+  }
+
+  // From now on, variable terms are as if we're in "gtr" mode.
+  // but note that everything is flipped for the "ltr" function.
+
+  for (var i = 0; i < range.set.length; ++i) {
+    var comparators = range.set[i]
+
+    var high = null
+    var low = null
+
+    comparators.forEach(function (comparator) {
+      if (comparator.semver === ANY) {
+        comparator = new Comparator('>=0.0.0')
+      }
+      high = high || comparator
+      low = low || comparator
+      if (gtfn(comparator.semver, high.semver, options)) {
+        high = comparator
+      } else if (ltfn(comparator.semver, low.semver, options)) {
+        low = comparator
+      }
+    })
+
+    // If the edge version comparator has a operator then our version
+    // isn't outside it
+    if (high.operator === comp || high.operator === ecomp) {
+      return false
+    }
+
+    // If the lowest version comparator has an operator and our version
+    // is less than it then it isn't higher than the range
+    if ((!low.operator || low.operator === comp) &&
+        ltefn(version, low.semver)) {
+      return false
+    } else if (low.operator === ecomp && ltfn(version, low.semver)) {
+      return false
+    }
+  }
+  return true
+}
+
+exports.prerelease = prerelease
+function prerelease (version, options) {
+  var parsed = parse(version, options)
+  return (parsed && parsed.prerelease.length) ? parsed.prerelease : null
+}
+
+exports.intersects = intersects
+function intersects (r1, r2, options) {
+  r1 = new Range(r1, options)
+  r2 = new Range(r2, options)
+  return r1.intersects(r2)
+}
+
+exports.coerce = coerce
+function coerce (version) {
+  if (version instanceof SemVer) {
+    return version
+  }
+
+  if (typeof version !== 'string') {
+    return null
+  }
+
+  var match = version.match(re[COERCE])
+
+  if (match == null) {
+    return null
+  }
+
+  return parse(match[1] +
+    '.' + (match[2] || '0') +
+    '.' + (match[3] || '0'))
 }
 
 
@@ -14178,8 +14727,8 @@ module.exports = function (a_, b_) {
 
 Object.defineProperty(exports, "__esModule", { value: true });
 const events_1 = __webpack_require__(614);
-const fsScandir = __webpack_require__(990);
-const fastq = __webpack_require__(830);
+const fsScandir = __webpack_require__(661);
+const fastq = __webpack_require__(689);
 const common = __webpack_require__(617);
 const reader_1 = __webpack_require__(962);
 class AsyncReader extends reader_1.default {
@@ -14384,207 +14933,39 @@ function unmonkeypatch () {
 /* 306 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
-var concatMap = __webpack_require__(775);
-var balanced = __webpack_require__(284);
-
-module.exports = expandTop;
-
-var escSlash = '\0SLASH'+Math.random()+'\0';
-var escOpen = '\0OPEN'+Math.random()+'\0';
-var escClose = '\0CLOSE'+Math.random()+'\0';
-var escComma = '\0COMMA'+Math.random()+'\0';
-var escPeriod = '\0PERIOD'+Math.random()+'\0';
-
-function numeric(str) {
-  return parseInt(str, 10) == str
-    ? parseInt(str, 10)
-    : str.charCodeAt(0);
-}
-
-function escapeBraces(str) {
-  return str.split('\\\\').join(escSlash)
-            .split('\\{').join(escOpen)
-            .split('\\}').join(escClose)
-            .split('\\,').join(escComma)
-            .split('\\.').join(escPeriod);
-}
-
-function unescapeBraces(str) {
-  return str.split(escSlash).join('\\')
-            .split(escOpen).join('{')
-            .split(escClose).join('}')
-            .split(escComma).join(',')
-            .split(escPeriod).join('.');
-}
+"use strict";
 
 
-// Basically just str.split(","), but handling cases
-// where we have nested braced sections, which should be
-// treated as individual members, like {a,{b,c},d}
-function parseCommaParts(str) {
-  if (!str)
-    return [''];
+const fs = __webpack_require__(747);
+const shebangCommand = __webpack_require__(866);
 
-  var parts = [];
-  var m = balanced('{', '}', str);
+function readShebang(command) {
+    // Read the first 150 bytes from the file
+    const size = 150;
+    let buffer;
 
-  if (!m)
-    return str.split(',');
-
-  var pre = m.pre;
-  var body = m.body;
-  var post = m.post;
-  var p = pre.split(',');
-
-  p[p.length-1] += '{' + body + '}';
-  var postParts = parseCommaParts(post);
-  if (post.length) {
-    p[p.length-1] += postParts.shift();
-    p.push.apply(p, postParts);
-  }
-
-  parts.push.apply(parts, p);
-
-  return parts;
-}
-
-function expandTop(str) {
-  if (!str)
-    return [];
-
-  // I don't know why Bash 4.3 does this, but it does.
-  // Anything starting with {} will have the first two bytes preserved
-  // but *only* at the top level, so {},a}b will not expand to anything,
-  // but a{},b}c will be expanded to [a}c,abc].
-  // One could argue that this is a bug in Bash, but since the goal of
-  // this module is to match Bash's rules, we escape a leading {}
-  if (str.substr(0, 2) === '{}') {
-    str = '\\{\\}' + str.substr(2);
-  }
-
-  return expand(escapeBraces(str), true).map(unescapeBraces);
-}
-
-function identity(e) {
-  return e;
-}
-
-function embrace(str) {
-  return '{' + str + '}';
-}
-function isPadded(el) {
-  return /^-?0\d/.test(el);
-}
-
-function lte(i, y) {
-  return i <= y;
-}
-function gte(i, y) {
-  return i >= y;
-}
-
-function expand(str, isTop) {
-  var expansions = [];
-
-  var m = balanced('{', '}', str);
-  if (!m || /\$$/.test(m.pre)) return [str];
-
-  var isNumericSequence = /^-?\d+\.\.-?\d+(?:\.\.-?\d+)?$/.test(m.body);
-  var isAlphaSequence = /^[a-zA-Z]\.\.[a-zA-Z](?:\.\.-?\d+)?$/.test(m.body);
-  var isSequence = isNumericSequence || isAlphaSequence;
-  var isOptions = m.body.indexOf(',') >= 0;
-  if (!isSequence && !isOptions) {
-    // {a},b}
-    if (m.post.match(/,.*\}/)) {
-      str = m.pre + '{' + m.body + escClose + m.post;
-      return expand(str);
+    if (Buffer.alloc) {
+        // Node.js v4.5+ / v5.10+
+        buffer = Buffer.alloc(size);
+    } else {
+        // Old Node.js API
+        buffer = new Buffer(size);
+        buffer.fill(0); // zero-fill
     }
-    return [str];
-  }
 
-  var n;
-  if (isSequence) {
-    n = m.body.split(/\.\./);
-  } else {
-    n = parseCommaParts(m.body);
-    if (n.length === 1) {
-      // x{{a,b}}y ==> x{a}y x{b}y
-      n = expand(n[0], false).map(embrace);
-      if (n.length === 1) {
-        var post = m.post.length
-          ? expand(m.post, false)
-          : [''];
-        return post.map(function(p) {
-          return m.pre + n[0] + p;
-        });
-      }
-    }
-  }
+    let fd;
 
-  // at this point, n is the parts, and we know it's not a comma set
-  // with a single entry.
+    try {
+        fd = fs.openSync(command, 'r');
+        fs.readSync(fd, buffer, 0, size, 0);
+        fs.closeSync(fd);
+    } catch (e) { /* Empty */ }
 
-  // no need to expand pre, since it is guaranteed to be free of brace-sets
-  var pre = m.pre;
-  var post = m.post.length
-    ? expand(m.post, false)
-    : [''];
-
-  var N;
-
-  if (isSequence) {
-    var x = numeric(n[0]);
-    var y = numeric(n[1]);
-    var width = Math.max(n[0].length, n[1].length)
-    var incr = n.length == 3
-      ? Math.abs(numeric(n[2]))
-      : 1;
-    var test = lte;
-    var reverse = y < x;
-    if (reverse) {
-      incr *= -1;
-      test = gte;
-    }
-    var pad = n.some(isPadded);
-
-    N = [];
-
-    for (var i = x; test(i, y); i += incr) {
-      var c;
-      if (isAlphaSequence) {
-        c = String.fromCharCode(i);
-        if (c === '\\')
-          c = '';
-      } else {
-        c = String(i);
-        if (pad) {
-          var need = width - c.length;
-          if (need > 0) {
-            var z = new Array(need + 1).join('0');
-            if (i < 0)
-              c = '-' + z + c.slice(1);
-            else
-              c = z + c;
-          }
-        }
-      }
-      N.push(c);
-    }
-  } else {
-    N = concatMap(n, function(el) { return expand(el, false) });
-  }
-
-  for (var j = 0; j < N.length; j++) {
-    for (var k = 0; k < post.length; k++) {
-      var expansion = pre + N[j] + post[k];
-      if (!isTop || isSequence || expansion)
-        expansions.push(expansion);
-    }
-  }
-
-  return expansions;
+    // Attempt to extract shebang (null is returned if not a shebang)
+    return shebangCommand(buffer.toString());
 }
 
+module.exports = readShebang;
 
 
 /***/ }),
@@ -14595,396 +14976,7 @@ function expand(str, isTop) {
 /* 311 */,
 /* 312 */,
 /* 313 */,
-/* 314 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-"use strict";
-
-
-const utils = __webpack_require__(224);
-const {
-  CHAR_ASTERISK,             /* * */
-  CHAR_AT,                   /* @ */
-  CHAR_BACKWARD_SLASH,       /* \ */
-  CHAR_COMMA,                /* , */
-  CHAR_DOT,                  /* . */
-  CHAR_EXCLAMATION_MARK,     /* ! */
-  CHAR_FORWARD_SLASH,        /* / */
-  CHAR_LEFT_CURLY_BRACE,     /* { */
-  CHAR_LEFT_PARENTHESES,     /* ( */
-  CHAR_LEFT_SQUARE_BRACKET,  /* [ */
-  CHAR_PLUS,                 /* + */
-  CHAR_QUESTION_MARK,        /* ? */
-  CHAR_RIGHT_CURLY_BRACE,    /* } */
-  CHAR_RIGHT_PARENTHESES,    /* ) */
-  CHAR_RIGHT_SQUARE_BRACKET  /* ] */
-} = __webpack_require__(530);
-
-const isPathSeparator = code => {
-  return code === CHAR_FORWARD_SLASH || code === CHAR_BACKWARD_SLASH;
-};
-
-const depth = token => {
-  if (token.isPrefix !== true) {
-    token.depth = token.isGlobstar ? Infinity : 1;
-  }
-};
-
-/**
- * Quickly scans a glob pattern and returns an object with a handful of
- * useful properties, like `isGlob`, `path` (the leading non-glob, if it exists),
- * `glob` (the actual pattern), and `negated` (true if the path starts with `!`).
- *
- * ```js
- * const pm = require('picomatch');
- * console.log(pm.scan('foo/bar/*.js'));
- * { isGlob: true, input: 'foo/bar/*.js', base: 'foo/bar', glob: '*.js' }
- * ```
- * @param {String} `str`
- * @param {Object} `options`
- * @return {Object} Returns an object with tokens and regex source string.
- * @api public
- */
-
-const scan = (input, options) => {
-  const opts = options || {};
-
-  const length = input.length - 1;
-  const scanToEnd = opts.parts === true || opts.scanToEnd === true;
-  const slashes = [];
-  const tokens = [];
-  const parts = [];
-
-  let str = input;
-  let index = -1;
-  let start = 0;
-  let lastIndex = 0;
-  let isBrace = false;
-  let isBracket = false;
-  let isGlob = false;
-  let isExtglob = false;
-  let isGlobstar = false;
-  let braceEscaped = false;
-  let backslashes = false;
-  let negated = false;
-  let finished = false;
-  let braces = 0;
-  let prev;
-  let code;
-  let token = { value: '', depth: 0, isGlob: false };
-
-  const eos = () => index >= length;
-  const peek = () => str.charCodeAt(index + 1);
-  const advance = () => {
-    prev = code;
-    return str.charCodeAt(++index);
-  };
-
-  while (index < length) {
-    code = advance();
-    let next;
-
-    if (code === CHAR_BACKWARD_SLASH) {
-      backslashes = token.backslashes = true;
-      code = advance();
-
-      if (code === CHAR_LEFT_CURLY_BRACE) {
-        braceEscaped = true;
-      }
-      continue;
-    }
-
-    if (braceEscaped === true || code === CHAR_LEFT_CURLY_BRACE) {
-      braces++;
-
-      while (eos() !== true && (code = advance())) {
-        if (code === CHAR_BACKWARD_SLASH) {
-          backslashes = token.backslashes = true;
-          advance();
-          continue;
-        }
-
-        if (code === CHAR_LEFT_CURLY_BRACE) {
-          braces++;
-          continue;
-        }
-
-        if (braceEscaped !== true && code === CHAR_DOT && (code = advance()) === CHAR_DOT) {
-          isBrace = token.isBrace = true;
-          isGlob = token.isGlob = true;
-          finished = true;
-
-          if (scanToEnd === true) {
-            continue;
-          }
-
-          break;
-        }
-
-        if (braceEscaped !== true && code === CHAR_COMMA) {
-          isBrace = token.isBrace = true;
-          isGlob = token.isGlob = true;
-          finished = true;
-
-          if (scanToEnd === true) {
-            continue;
-          }
-
-          break;
-        }
-
-        if (code === CHAR_RIGHT_CURLY_BRACE) {
-          braces--;
-
-          if (braces === 0) {
-            braceEscaped = false;
-            isBrace = token.isBrace = true;
-            finished = true;
-            break;
-          }
-        }
-      }
-
-      if (scanToEnd === true) {
-        continue;
-      }
-
-      break;
-    }
-
-    if (code === CHAR_FORWARD_SLASH) {
-      slashes.push(index);
-      tokens.push(token);
-      token = { value: '', depth: 0, isGlob: false };
-
-      if (finished === true) continue;
-      if (prev === CHAR_DOT && index === (start + 1)) {
-        start += 2;
-        continue;
-      }
-
-      lastIndex = index + 1;
-      continue;
-    }
-
-    if (opts.noext !== true) {
-      const isExtglobChar = code === CHAR_PLUS
-        || code === CHAR_AT
-        || code === CHAR_ASTERISK
-        || code === CHAR_QUESTION_MARK
-        || code === CHAR_EXCLAMATION_MARK;
-
-      if (isExtglobChar === true && peek() === CHAR_LEFT_PARENTHESES) {
-        isGlob = token.isGlob = true;
-        isExtglob = token.isExtglob = true;
-        finished = true;
-
-        if (scanToEnd === true) {
-          while (eos() !== true && (code = advance())) {
-            if (code === CHAR_BACKWARD_SLASH) {
-              backslashes = token.backslashes = true;
-              code = advance();
-              continue;
-            }
-
-            if (code === CHAR_RIGHT_PARENTHESES) {
-              isGlob = token.isGlob = true;
-              finished = true;
-              break;
-            }
-          }
-          continue;
-        }
-        break;
-      }
-    }
-
-    if (code === CHAR_ASTERISK) {
-      if (prev === CHAR_ASTERISK) isGlobstar = token.isGlobstar = true;
-      isGlob = token.isGlob = true;
-      finished = true;
-
-      if (scanToEnd === true) {
-        continue;
-      }
-      break;
-    }
-
-    if (code === CHAR_QUESTION_MARK) {
-      isGlob = token.isGlob = true;
-      finished = true;
-
-      if (scanToEnd === true) {
-        continue;
-      }
-      break;
-    }
-
-    if (code === CHAR_LEFT_SQUARE_BRACKET) {
-      while (eos() !== true && (next = advance())) {
-        if (next === CHAR_BACKWARD_SLASH) {
-          backslashes = token.backslashes = true;
-          advance();
-          continue;
-        }
-
-        if (next === CHAR_RIGHT_SQUARE_BRACKET) {
-          isBracket = token.isBracket = true;
-          isGlob = token.isGlob = true;
-          finished = true;
-
-          if (scanToEnd === true) {
-            continue;
-          }
-          break;
-        }
-      }
-    }
-
-    if (opts.nonegate !== true && code === CHAR_EXCLAMATION_MARK && index === start) {
-      negated = token.negated = true;
-      start++;
-      continue;
-    }
-
-    if (opts.noparen !== true && code === CHAR_LEFT_PARENTHESES) {
-      isGlob = token.isGlob = true;
-
-      if (scanToEnd === true) {
-        while (eos() !== true && (code = advance())) {
-          if (code === CHAR_LEFT_PARENTHESES) {
-            backslashes = token.backslashes = true;
-            code = advance();
-            continue;
-          }
-
-          if (code === CHAR_RIGHT_PARENTHESES) {
-            finished = true;
-            break;
-          }
-        }
-        continue;
-      }
-      break;
-    }
-
-    if (isGlob === true) {
-      finished = true;
-
-      if (scanToEnd === true) {
-        continue;
-      }
-
-      break;
-    }
-  }
-
-  if (opts.noext === true) {
-    isExtglob = false;
-    isGlob = false;
-  }
-
-  let base = str;
-  let prefix = '';
-  let glob = '';
-
-  if (start > 0) {
-    prefix = str.slice(0, start);
-    str = str.slice(start);
-    lastIndex -= start;
-  }
-
-  if (base && isGlob === true && lastIndex > 0) {
-    base = str.slice(0, lastIndex);
-    glob = str.slice(lastIndex);
-  } else if (isGlob === true) {
-    base = '';
-    glob = str;
-  } else {
-    base = str;
-  }
-
-  if (base && base !== '' && base !== '/' && base !== str) {
-    if (isPathSeparator(base.charCodeAt(base.length - 1))) {
-      base = base.slice(0, -1);
-    }
-  }
-
-  if (opts.unescape === true) {
-    if (glob) glob = utils.removeBackslashes(glob);
-
-    if (base && backslashes === true) {
-      base = utils.removeBackslashes(base);
-    }
-  }
-
-  const state = {
-    prefix,
-    input,
-    start,
-    base,
-    glob,
-    isBrace,
-    isBracket,
-    isGlob,
-    isExtglob,
-    isGlobstar,
-    negated
-  };
-
-  if (opts.tokens === true) {
-    state.maxDepth = 0;
-    if (!isPathSeparator(code)) {
-      tokens.push(token);
-    }
-    state.tokens = tokens;
-  }
-
-  if (opts.parts === true || opts.tokens === true) {
-    let prevIndex;
-
-    for (let idx = 0; idx < slashes.length; idx++) {
-      const n = prevIndex ? prevIndex + 1 : start;
-      const i = slashes[idx];
-      const value = input.slice(n, i);
-      if (opts.tokens) {
-        if (idx === 0 && start !== 0) {
-          tokens[idx].isPrefix = true;
-          tokens[idx].value = prefix;
-        } else {
-          tokens[idx].value = value;
-        }
-        depth(tokens[idx]);
-        state.maxDepth += tokens[idx].depth;
-      }
-      if (idx !== 0 || value !== '') {
-        parts.push(value);
-      }
-      prevIndex = i;
-    }
-
-    if (prevIndex && prevIndex + 1 < input.length) {
-      const value = input.slice(prevIndex + 1);
-      parts.push(value);
-
-      if (opts.tokens) {
-        tokens[tokens.length - 1].value = value;
-        depth(tokens[tokens.length - 1]);
-        state.maxDepth += tokens[tokens.length - 1].depth;
-      }
-    }
-
-    state.slashes = slashes;
-    state.parts = parts;
-  }
-
-  return state;
-};
-
-module.exports = scan;
-
-
-/***/ }),
+/* 314 */,
 /* 315 */
 /***/ (function(module) {
 
@@ -15681,7 +15673,40 @@ module.exports = _pwd;
 /* 360 */,
 /* 361 */,
 /* 362 */,
-/* 363 */,
+/* 363 */
+/***/ (function(module) {
+
+module.exports = register
+
+function register (state, name, method, options) {
+  if (typeof method !== 'function') {
+    throw new Error('method for before hook must be a function')
+  }
+
+  if (!options) {
+    options = {}
+  }
+
+  if (Array.isArray(name)) {
+    return name.reverse().reduce(function (callback, name) {
+      return register.bind(null, state, name, callback, options)
+    }, method)()
+  }
+
+  return Promise.resolve()
+    .then(function () {
+      if (!state.registry[name]) {
+        return method(options)
+      }
+
+      return (state.registry[name]).reduce(function (method, registered) {
+        return registered.hook.bind(null, method, options)
+      }, method)()
+    })
+}
+
+
+/***/ }),
 /* 364 */,
 /* 365 */,
 /* 366 */
@@ -15691,10 +15716,10 @@ module.exports = _pwd;
 
 
 const path = __webpack_require__(622);
-const scan = __webpack_require__(314);
+const scan = __webpack_require__(537);
 const parse = __webpack_require__(806);
 const utils = __webpack_require__(224);
-const constants = __webpack_require__(530);
+const constants = __webpack_require__(199);
 const isObject = val => val && typeof val === 'object' && !Array.isArray(val);
 
 /**
@@ -16349,7 +16374,7 @@ exports.default = ErrorFilter;
 // 3. This notice may not be removed or altered from any source distribution.
 
 var utils   = __webpack_require__(999);
-var trees   = __webpack_require__(43);
+var trees   = __webpack_require__(136);
 var adler32 = __webpack_require__(142);
 var crc32   = __webpack_require__(613);
 var msg     = __webpack_require__(868);
@@ -18293,27 +18318,7 @@ module.exports = _to;
 
 
 /***/ }),
-/* 381 */
-/***/ (function(__unusedmodule, exports, __webpack_require__) {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", { value: true });
-const sync_1 = __webpack_require__(394);
-class SyncProvider {
-    constructor(_root, _settings) {
-        this._root = _root;
-        this._settings = _settings;
-        this._reader = new sync_1.default(this._root, this._settings);
-    }
-    read() {
-        return this._reader.read();
-    }
-}
-exports.default = SyncProvider;
-
-
-/***/ }),
+/* 381 */,
 /* 382 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
@@ -18930,45 +18935,7 @@ module.exports.clearCache = clearCache;
 
 
 /***/ }),
-/* 389 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-"use strict";
-
-
-const fs = __webpack_require__(747);
-const shebangCommand = __webpack_require__(866);
-
-function readShebang(command) {
-    // Read the first 150 bytes from the file
-    const size = 150;
-    let buffer;
-
-    if (Buffer.alloc) {
-        // Node.js v4.5+ / v5.10+
-        buffer = Buffer.alloc(size);
-    } else {
-        // Old Node.js API
-        buffer = new Buffer(size);
-        buffer.fill(0); // zero-fill
-    }
-
-    let fd;
-
-    try {
-        fd = fs.openSync(command, 'r');
-        fs.readSync(fd, buffer, 0, size, 0);
-        fs.closeSync(fd);
-    } catch (e) { /* Empty */ }
-
-    // Attempt to extract shebang (null is returned if not a shebang)
-    return shebangCommand(buffer.toString());
-}
-
-module.exports = readShebang;
-
-
-/***/ }),
+/* 389 */,
 /* 390 */
 /***/ (function(module) {
 
@@ -18997,646 +18964,24 @@ for(var key in Buffer.prototype) {
 /* 392 */,
 /* 393 */,
 /* 394 */
-/***/ (function(__unusedmodule, exports, __webpack_require__) {
+/***/ (function(__unusedmodule, exports) {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", { value: true });
-const fsScandir = __webpack_require__(990);
-const common = __webpack_require__(617);
-const reader_1 = __webpack_require__(962);
-class SyncReader extends reader_1.default {
-    constructor() {
-        super(...arguments);
-        this._scandir = fsScandir.scandirSync;
-        this._storage = new Set();
-        this._queue = new Set();
-    }
-    read() {
-        this._pushToQueue(this._root, this._settings.basePath);
-        this._handleQueue();
-        return [...this._storage];
-    }
-    _pushToQueue(directory, base) {
-        this._queue.add({ directory, base });
-    }
-    _handleQueue() {
-        for (const item of this._queue.values()) {
-            this._handleDirectory(item.directory, item.base);
-        }
-    }
-    _handleDirectory(directory, base) {
-        try {
-            const entries = this._scandir(directory, this._settings.fsScandirSettings);
-            for (const entry of entries) {
-                this._handleEntry(entry, base);
-            }
-        }
-        catch (error) {
-            this._handleError(error);
-        }
-    }
-    _handleError(error) {
-        if (!common.isFatalError(this._settings, error)) {
-            return;
-        }
-        throw error;
-    }
-    _handleEntry(entry, base) {
-        const fullpath = entry.path;
-        if (base !== undefined) {
-            entry.path = common.joinPathSegments(base, entry.name, this._settings.pathSegmentSeparator);
-        }
-        if (common.isAppliedFilter(this._settings.entryFilter, entry)) {
-            this._pushToStorage(entry);
-        }
-        if (entry.dirent.isDirectory() && common.isAppliedFilter(this._settings.deepFilter, entry)) {
-            this._pushToQueue(fullpath, entry.path);
-        }
-    }
-    _pushToStorage(entry) {
-        this._storage.add(entry);
-    }
+function isString(input) {
+    return typeof input === 'string';
 }
-exports.default = SyncReader;
+exports.isString = isString;
+function isEmpty(input) {
+    return input === '';
+}
+exports.isEmpty = isEmpty;
 
 
 /***/ }),
 /* 395 */,
-/* 396 */
-/***/ (function(module) {
-
-// A simple implementation of make-array
-function makeArray (subject) {
-  return Array.isArray(subject)
-    ? subject
-    : [subject]
-}
-
-const REGEX_TEST_BLANK_LINE = /^\s+$/
-const REGEX_REPLACE_LEADING_EXCAPED_EXCLAMATION = /^\\!/
-const REGEX_REPLACE_LEADING_EXCAPED_HASH = /^\\#/
-const REGEX_SPLITALL_CRLF = /\r?\n/g
-// /foo,
-// ./foo,
-// ../foo,
-// .
-// ..
-const REGEX_TEST_INVALID_PATH = /^\.*\/|^\.+$/
-
-const SLASH = '/'
-const KEY_IGNORE = typeof Symbol !== 'undefined'
-  ? Symbol.for('node-ignore')
-  /* istanbul ignore next */
-  : 'node-ignore'
-
-const define = (object, key, value) =>
-  Object.defineProperty(object, key, {value})
-
-const REGEX_REGEXP_RANGE = /([0-z])-([0-z])/g
-
-// Sanitize the range of a regular expression
-// The cases are complicated, see test cases for details
-const sanitizeRange = range => range.replace(
-  REGEX_REGEXP_RANGE,
-  (match, from, to) => from.charCodeAt(0) <= to.charCodeAt(0)
-    ? match
-    // Invalid range (out of order) which is ok for gitignore rules but
-    //   fatal for JavaScript regular expression, so eliminate it.
-    : ''
-)
-
-// > If the pattern ends with a slash,
-// > it is removed for the purpose of the following description,
-// > but it would only find a match with a directory.
-// > In other words, foo/ will match a directory foo and paths underneath it,
-// > but will not match a regular file or a symbolic link foo
-// >  (this is consistent with the way how pathspec works in general in Git).
-// '`foo/`' will not match regular file '`foo`' or symbolic link '`foo`'
-// -> ignore-rules will not deal with it, because it costs extra `fs.stat` call
-//      you could use option `mark: true` with `glob`
-
-// '`foo/`' should not continue with the '`..`'
-const REPLACERS = [
-
-  // > Trailing spaces are ignored unless they are quoted with backslash ("\")
-  [
-    // (a\ ) -> (a )
-    // (a  ) -> (a)
-    // (a \ ) -> (a  )
-    /\\?\s+$/,
-    match => match.indexOf('\\') === 0
-      ? ' '
-      : ''
-  ],
-
-  // replace (\ ) with ' '
-  [
-    /\\\s/g,
-    () => ' '
-  ],
-
-  // Escape metacharacters
-  // which is written down by users but means special for regular expressions.
-
-  // > There are 12 characters with special meanings:
-  // > - the backslash \,
-  // > - the caret ^,
-  // > - the dollar sign $,
-  // > - the period or dot .,
-  // > - the vertical bar or pipe symbol |,
-  // > - the question mark ?,
-  // > - the asterisk or star *,
-  // > - the plus sign +,
-  // > - the opening parenthesis (,
-  // > - the closing parenthesis ),
-  // > - and the opening square bracket [,
-  // > - the opening curly brace {,
-  // > These special characters are often called "metacharacters".
-  [
-    /[\\^$.|*+(){]/g,
-    match => `\\${match}`
-  ],
-
-  [
-    // > [abc] matches any character inside the brackets
-    // >    (in this case a, b, or c);
-    /\[([^\]/]*)($|\])/g,
-    (match, p1, p2) => p2 === ']'
-      ? `[${sanitizeRange(p1)}]`
-      : `\\${match}`
-  ],
-
-  [
-    // > a question mark (?) matches a single character
-    /(?!\\)\?/g,
-    () => '[^/]'
-  ],
-
-  // leading slash
-  [
-
-    // > A leading slash matches the beginning of the pathname.
-    // > For example, "/*.c" matches "cat-file.c" but not "mozilla-sha1/sha1.c".
-    // A leading slash matches the beginning of the pathname
-    /^\//,
-    () => '^'
-  ],
-
-  // replace special metacharacter slash after the leading slash
-  [
-    /\//g,
-    () => '\\/'
-  ],
-
-  [
-    // > A leading "**" followed by a slash means match in all directories.
-    // > For example, "**/foo" matches file or directory "foo" anywhere,
-    // > the same as pattern "foo".
-    // > "**/foo/bar" matches file or directory "bar" anywhere that is directly
-    // >   under directory "foo".
-    // Notice that the '*'s have been replaced as '\\*'
-    /^\^*\\\*\\\*\\\//,
-
-    // '**/foo' <-> 'foo'
-    () => '^(?:.*\\/)?'
-  ],
-
-  // ending
-  [
-    // 'js' will not match 'js.'
-    // 'ab' will not match 'abc'
-    /(?:[^*])$/,
-
-    // WTF!
-    // https://git-scm.com/docs/gitignore
-    // changes in [2.22.1](https://git-scm.com/docs/gitignore/2.22.1)
-    // which re-fixes #24, #38
-
-    // > If there is a separator at the end of the pattern then the pattern
-    // > will only match directories, otherwise the pattern can match both
-    // > files and directories.
-
-    // 'js*' will not match 'a.js'
-    // 'js/' will not match 'a.js'
-    // 'js' will match 'a.js' and 'a.js/'
-    match => /\/$/.test(match)
-      // foo/ will not match 'foo'
-      ? `${match}$`
-      // foo matches 'foo' and 'foo/'
-      : `${match}(?=$|\\/$)`
-  ],
-
-  // starting
-  [
-    // there will be no leading '/'
-    //   (which has been replaced by section "leading slash")
-    // If starts with '**', adding a '^' to the regular expression also works
-    /^(?=[^^])/,
-    function startingReplacer () {
-      // If has a slash `/` at the beginning or middle
-      return !/\/(?!$)/.test(this)
-        // > Prior to 2.22.1
-        // > If the pattern does not contain a slash /,
-        // >   Git treats it as a shell glob pattern
-        // Actually, if there is only a trailing slash,
-        //   git also treats it as a shell glob pattern
-
-        // After 2.22.1 (compatible but clearer)
-        // > If there is a separator at the beginning or middle (or both)
-        // > of the pattern, then the pattern is relative to the directory
-        // > level of the particular .gitignore file itself.
-        // > Otherwise the pattern may also match at any level below
-        // > the .gitignore level.
-        ? '(?:^|\\/)'
-
-        // > Otherwise, Git treats the pattern as a shell glob suitable for
-        // >   consumption by fnmatch(3)
-        : '^'
-    }
-  ],
-
-  // two globstars
-  [
-    // Use lookahead assertions so that we could match more than one `'/**'`
-    /\\\/\\\*\\\*(?=\\\/|$)/g,
-
-    // Zero, one or several directories
-    // should not use '*', or it will be replaced by the next replacer
-
-    // Check if it is not the last `'/**'`
-    (_, index, str) => index + 6 < str.length
-
-      // case: /**/
-      // > A slash followed by two consecutive asterisks then a slash matches
-      // >   zero or more directories.
-      // > For example, "a/**/b" matches "a/b", "a/x/b", "a/x/y/b" and so on.
-      // '/**/'
-      ? '(?:\\/[^\\/]+)*'
-
-      // case: /**
-      // > A trailing `"/**"` matches everything inside.
-
-      // #21: everything inside but it should not include the current folder
-      : '\\/.+'
-  ],
-
-  // intermediate wildcards
-  [
-    // Never replace escaped '*'
-    // ignore rule '\*' will match the path '*'
-
-    // 'abc.*/' -> go
-    // 'abc.*'  -> skip this rule
-    /(^|[^\\]+)\\\*(?=.+)/g,
-
-    // '*.js' matches '.js'
-    // '*.js' doesn't match 'abc'
-    (_, p1) => `${p1}[^\\/]*`
-  ],
-
-  // trailing wildcard
-  [
-    /(\^|\\\/)?\\\*$/,
-    (_, p1) => {
-      const prefix = p1
-        // '\^':
-        // '/*' does not match ''
-        // '/*' does not match everything
-
-        // '\\\/':
-        // 'abc/*' does not match 'abc/'
-        ? `${p1}[^/]+`
-
-        // 'a*' matches 'a'
-        // 'a*' matches 'aa'
-        : '[^/]*'
-
-      return `${prefix}(?=$|\\/$)`
-    }
-  ],
-
-  [
-    // unescape
-    /\\\\\\/g,
-    () => '\\'
-  ]
-]
-
-// A simple cache, because an ignore rule only has only one certain meaning
-const regexCache = Object.create(null)
-
-// @param {pattern}
-const makeRegex = (pattern, negative, ignorecase) => {
-  const r = regexCache[pattern]
-  if (r) {
-    return r
-  }
-
-  // const replacers = negative
-  //   ? NEGATIVE_REPLACERS
-  //   : POSITIVE_REPLACERS
-
-  const source = REPLACERS.reduce(
-    (prev, current) => prev.replace(current[0], current[1].bind(pattern)),
-    pattern
-  )
-
-  return regexCache[pattern] = ignorecase
-    ? new RegExp(source, 'i')
-    : new RegExp(source)
-}
-
-const isString = subject => typeof subject === 'string'
-
-// > A blank line matches no files, so it can serve as a separator for readability.
-const checkPattern = pattern => pattern
-  && isString(pattern)
-  && !REGEX_TEST_BLANK_LINE.test(pattern)
-
-  // > A line starting with # serves as a comment.
-  && pattern.indexOf('#') !== 0
-
-const splitPattern = pattern => pattern.split(REGEX_SPLITALL_CRLF)
-
-class IgnoreRule {
-  constructor (
-    origin,
-    pattern,
-    negative,
-    regex
-  ) {
-    this.origin = origin
-    this.pattern = pattern
-    this.negative = negative
-    this.regex = regex
-  }
-}
-
-const createRule = (pattern, ignorecase) => {
-  const origin = pattern
-  let negative = false
-
-  // > An optional prefix "!" which negates the pattern;
-  if (pattern.indexOf('!') === 0) {
-    negative = true
-    pattern = pattern.substr(1)
-  }
-
-  pattern = pattern
-  // > Put a backslash ("\") in front of the first "!" for patterns that
-  // >   begin with a literal "!", for example, `"\!important!.txt"`.
-  .replace(REGEX_REPLACE_LEADING_EXCAPED_EXCLAMATION, '!')
-  // > Put a backslash ("\") in front of the first hash for patterns that
-  // >   begin with a hash.
-  .replace(REGEX_REPLACE_LEADING_EXCAPED_HASH, '#')
-
-  const regex = makeRegex(pattern, negative, ignorecase)
-
-  return new IgnoreRule(
-    origin,
-    pattern,
-    negative,
-    regex
-  )
-}
-
-const throwError = (message, Ctor) => {
-  throw new Ctor(message)
-}
-
-const checkPath = (path, originalPath, doThrow) => {
-  if (!isString(path)) {
-    return doThrow(
-      `path must be a string, but got \`${originalPath}\``,
-      TypeError
-    )
-  }
-
-  // We don't know if we should ignore '', so throw
-  if (!path) {
-    return doThrow(`path must not be empty`, TypeError)
-  }
-
-  // Check if it is a relative path
-  if (checkPath.isNotRelative(path)) {
-    const r = '`path.relative()`d'
-    return doThrow(
-      `path should be a ${r} string, but got "${originalPath}"`,
-      RangeError
-    )
-  }
-
-  return true
-}
-
-const isNotRelative = path => REGEX_TEST_INVALID_PATH.test(path)
-
-checkPath.isNotRelative = isNotRelative
-checkPath.convert = p => p
-
-class Ignore {
-  constructor ({
-    ignorecase = true
-  } = {}) {
-    this._rules = []
-    this._ignorecase = ignorecase
-    define(this, KEY_IGNORE, true)
-    this._initCache()
-  }
-
-  _initCache () {
-    this._ignoreCache = Object.create(null)
-    this._testCache = Object.create(null)
-  }
-
-  _addPattern (pattern) {
-    // #32
-    if (pattern && pattern[KEY_IGNORE]) {
-      this._rules = this._rules.concat(pattern._rules)
-      this._added = true
-      return
-    }
-
-    if (checkPattern(pattern)) {
-      const rule = createRule(pattern, this._ignorecase)
-      this._added = true
-      this._rules.push(rule)
-    }
-  }
-
-  // @param {Array<string> | string | Ignore} pattern
-  add (pattern) {
-    this._added = false
-
-    makeArray(
-      isString(pattern)
-        ? splitPattern(pattern)
-        : pattern
-    ).forEach(this._addPattern, this)
-
-    // Some rules have just added to the ignore,
-    // making the behavior changed.
-    if (this._added) {
-      this._initCache()
-    }
-
-    return this
-  }
-
-  // legacy
-  addPattern (pattern) {
-    return this.add(pattern)
-  }
-
-  //          |           ignored : unignored
-  // negative |   0:0   |   0:1   |   1:0   |   1:1
-  // -------- | ------- | ------- | ------- | --------
-  //     0    |  TEST   |  TEST   |  SKIP   |    X
-  //     1    |  TESTIF |  SKIP   |  TEST   |    X
-
-  // - SKIP: always skip
-  // - TEST: always test
-  // - TESTIF: only test if checkUnignored
-  // - X: that never happen
-
-  // @param {boolean} whether should check if the path is unignored,
-  //   setting `checkUnignored` to `false` could reduce additional
-  //   path matching.
-
-  // @returns {TestResult} true if a file is ignored
-  _testOne (path, checkUnignored) {
-    let ignored = false
-    let unignored = false
-
-    this._rules.forEach(rule => {
-      const {negative} = rule
-      if (
-        unignored === negative && ignored !== unignored
-        || negative && !ignored && !unignored && !checkUnignored
-      ) {
-        return
-      }
-
-      const matched = rule.regex.test(path)
-
-      if (matched) {
-        ignored = !negative
-        unignored = negative
-      }
-    })
-
-    return {
-      ignored,
-      unignored
-    }
-  }
-
-  // @returns {TestResult}
-  _test (originalPath, cache, checkUnignored, slices) {
-    const path = originalPath
-      // Supports nullable path
-      && checkPath.convert(originalPath)
-
-    checkPath(path, originalPath, throwError)
-
-    return this._t(path, cache, checkUnignored, slices)
-  }
-
-  _t (path, cache, checkUnignored, slices) {
-    if (path in cache) {
-      return cache[path]
-    }
-
-    if (!slices) {
-      // path/to/a.js
-      // ['path', 'to', 'a.js']
-      slices = path.split(SLASH)
-    }
-
-    slices.pop()
-
-    // If the path has no parent directory, just test it
-    if (!slices.length) {
-      return cache[path] = this._testOne(path, checkUnignored)
-    }
-
-    const parent = this._t(
-      slices.join(SLASH) + SLASH,
-      cache,
-      checkUnignored,
-      slices
-    )
-
-    // If the path contains a parent directory, check the parent first
-    return cache[path] = parent.ignored
-      // > It is not possible to re-include a file if a parent directory of
-      // >   that file is excluded.
-      ? parent
-      : this._testOne(path, checkUnignored)
-  }
-
-  ignores (path) {
-    return this._test(path, this._ignoreCache, false).ignored
-  }
-
-  createFilter () {
-    return path => !this.ignores(path)
-  }
-
-  filter (paths) {
-    return makeArray(paths).filter(this.createFilter())
-  }
-
-  // @returns {TestResult}
-  test (path) {
-    return this._test(path, this._testCache, true)
-  }
-}
-
-const factory = options => new Ignore(options)
-
-const returnFalse = () => false
-
-const isPathValid = path =>
-  checkPath(path && checkPath.convert(path), path, returnFalse)
-
-factory.isPathValid = isPathValid
-
-// Fixes typescript
-factory.default = factory
-
-module.exports = factory
-
-// Windows
-// --------------------------------------------------------------
-/* istanbul ignore if  */
-if (
-  // Detect `process` so that it can run in browsers.
-  typeof process !== 'undefined'
-  && (
-    process.env && process.env.IGNORE_TEST_WIN32
-    || process.platform === 'win32'
-  )
-) {
-  /* eslint no-control-regex: "off" */
-  const makePosix = str => /^\\\\\?\\/.test(str)
-  || /["<>|\u0000-\u001F]+/u.test(str)
-    ? str
-    : str.replace(/\\/g, '/')
-
-  checkPath.convert = makePosix
-
-  // 'C:\\foo'     <- 'C:\\foo' has been converted to 'C:/'
-  // 'd:\\foo'
-  const REGIX_IS_WINDOWS_PATH_ABSOLUTE = /^[a-z]:\//i
-  checkPath.isNotRelative = path =>
-    REGIX_IS_WINDOWS_PATH_ABSOLUTE.test(path)
-    || isNotRelative(path)
-}
-
-
-/***/ }),
+/* 396 */,
 /* 397 */,
 /* 398 */,
 /* 399 */,
@@ -21253,7 +20598,7 @@ var fs = __webpack_require__(747)
 var rp = __webpack_require__(302)
 var minimatch = __webpack_require__(93)
 var Minimatch = minimatch.Minimatch
-var inherits = __webpack_require__(689)
+var inherits = __webpack_require__(938)
 var EE = __webpack_require__(614).EventEmitter
 var path = __webpack_require__(622)
 var assert = __webpack_require__(357)
@@ -22040,7 +21385,7 @@ exports.default = Settings;
 
 const taskManager = __webpack_require__(384);
 const async_1 = __webpack_require__(113);
-const stream_1 = __webpack_require__(769);
+const stream_1 = __webpack_require__(775);
 const sync_1 = __webpack_require__(78);
 const settings_1 = __webpack_require__(332);
 const utils = __webpack_require__(444);
@@ -22433,7 +21778,480 @@ function errname(uv, code) {
 /***/ }),
 /* 428 */,
 /* 429 */,
-/* 430 */,
+/* 430 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+
+const util = __webpack_require__(669);
+const braces = __webpack_require__(783);
+const picomatch = __webpack_require__(827);
+const utils = __webpack_require__(224);
+const isEmptyString = val => typeof val === 'string' && (val === '' || val === './');
+
+/**
+ * Returns an array of strings that match one or more glob patterns.
+ *
+ * ```js
+ * const mm = require('micromatch');
+ * // mm(list, patterns[, options]);
+ *
+ * console.log(mm(['a.js', 'a.txt'], ['*.js']));
+ * //=> [ 'a.js' ]
+ * ```
+ * @param {String|Array<string>} list List of strings to match.
+ * @param {String|Array<string>} patterns One or more glob patterns to use for matching.
+ * @param {Object} options See available [options](#options)
+ * @return {Array} Returns an array of matches
+ * @summary false
+ * @api public
+ */
+
+const micromatch = (list, patterns, options) => {
+  patterns = [].concat(patterns);
+  list = [].concat(list);
+
+  let omit = new Set();
+  let keep = new Set();
+  let items = new Set();
+  let negatives = 0;
+
+  let onResult = state => {
+    items.add(state.output);
+    if (options && options.onResult) {
+      options.onResult(state);
+    }
+  };
+
+  for (let i = 0; i < patterns.length; i++) {
+    let isMatch = picomatch(String(patterns[i]), { ...options, onResult }, true);
+    let negated = isMatch.state.negated || isMatch.state.negatedExtglob;
+    if (negated) negatives++;
+
+    for (let item of list) {
+      let matched = isMatch(item, true);
+
+      let match = negated ? !matched.isMatch : matched.isMatch;
+      if (!match) continue;
+
+      if (negated) {
+        omit.add(matched.output);
+      } else {
+        omit.delete(matched.output);
+        keep.add(matched.output);
+      }
+    }
+  }
+
+  let result = negatives === patterns.length ? [...items] : [...keep];
+  let matches = result.filter(item => !omit.has(item));
+
+  if (options && matches.length === 0) {
+    if (options.failglob === true) {
+      throw new Error(`No matches found for "${patterns.join(', ')}"`);
+    }
+
+    if (options.nonull === true || options.nullglob === true) {
+      return options.unescape ? patterns.map(p => p.replace(/\\/g, '')) : patterns;
+    }
+  }
+
+  return matches;
+};
+
+/**
+ * Backwards compatibility
+ */
+
+micromatch.match = micromatch;
+
+/**
+ * Returns a matcher function from the given glob `pattern` and `options`.
+ * The returned function takes a string to match as its only argument and returns
+ * true if the string is a match.
+ *
+ * ```js
+ * const mm = require('micromatch');
+ * // mm.matcher(pattern[, options]);
+ *
+ * const isMatch = mm.matcher('*.!(*a)');
+ * console.log(isMatch('a.a')); //=> false
+ * console.log(isMatch('a.b')); //=> true
+ * ```
+ * @param {String} `pattern` Glob pattern
+ * @param {Object} `options`
+ * @return {Function} Returns a matcher function.
+ * @api public
+ */
+
+micromatch.matcher = (pattern, options) => picomatch(pattern, options);
+
+/**
+ * Returns true if **any** of the given glob `patterns` match the specified `string`.
+ *
+ * ```js
+ * const mm = require('micromatch');
+ * // mm.isMatch(string, patterns[, options]);
+ *
+ * console.log(mm.isMatch('a.a', ['b.*', '*.a'])); //=> true
+ * console.log(mm.isMatch('a.a', 'b.*')); //=> false
+ * ```
+ * @param {String} str The string to test.
+ * @param {String|Array} patterns One or more glob patterns to use for matching.
+ * @param {Object} [options] See available [options](#options).
+ * @return {Boolean} Returns true if any patterns match `str`
+ * @api public
+ */
+
+micromatch.isMatch = (str, patterns, options) => picomatch(patterns, options)(str);
+
+/**
+ * Backwards compatibility
+ */
+
+micromatch.any = micromatch.isMatch;
+
+/**
+ * Returns a list of strings that _**do not match any**_ of the given `patterns`.
+ *
+ * ```js
+ * const mm = require('micromatch');
+ * // mm.not(list, patterns[, options]);
+ *
+ * console.log(mm.not(['a.a', 'b.b', 'c.c'], '*.a'));
+ * //=> ['b.b', 'c.c']
+ * ```
+ * @param {Array} `list` Array of strings to match.
+ * @param {String|Array} `patterns` One or more glob pattern to use for matching.
+ * @param {Object} `options` See available [options](#options) for changing how matches are performed
+ * @return {Array} Returns an array of strings that **do not match** the given patterns.
+ * @api public
+ */
+
+micromatch.not = (list, patterns, options = {}) => {
+  patterns = [].concat(patterns).map(String);
+  let result = new Set();
+  let items = [];
+
+  let onResult = state => {
+    if (options.onResult) options.onResult(state);
+    items.push(state.output);
+  };
+
+  let matches = micromatch(list, patterns, { ...options, onResult });
+
+  for (let item of items) {
+    if (!matches.includes(item)) {
+      result.add(item);
+    }
+  }
+  return [...result];
+};
+
+/**
+ * Returns true if the given `string` contains the given pattern. Similar
+ * to [.isMatch](#isMatch) but the pattern can match any part of the string.
+ *
+ * ```js
+ * var mm = require('micromatch');
+ * // mm.contains(string, pattern[, options]);
+ *
+ * console.log(mm.contains('aa/bb/cc', '*b'));
+ * //=> true
+ * console.log(mm.contains('aa/bb/cc', '*d'));
+ * //=> false
+ * ```
+ * @param {String} `str` The string to match.
+ * @param {String|Array} `patterns` Glob pattern to use for matching.
+ * @param {Object} `options` See available [options](#options) for changing how matches are performed
+ * @return {Boolean} Returns true if the patter matches any part of `str`.
+ * @api public
+ */
+
+micromatch.contains = (str, pattern, options) => {
+  if (typeof str !== 'string') {
+    throw new TypeError(`Expected a string: "${util.inspect(str)}"`);
+  }
+
+  if (Array.isArray(pattern)) {
+    return pattern.some(p => micromatch.contains(str, p, options));
+  }
+
+  if (typeof pattern === 'string') {
+    if (isEmptyString(str) || isEmptyString(pattern)) {
+      return false;
+    }
+
+    if (str.includes(pattern) || (str.startsWith('./') && str.slice(2).includes(pattern))) {
+      return true;
+    }
+  }
+
+  return micromatch.isMatch(str, pattern, { ...options, contains: true });
+};
+
+/**
+ * Filter the keys of the given object with the given `glob` pattern
+ * and `options`. Does not attempt to match nested keys. If you need this feature,
+ * use [glob-object][] instead.
+ *
+ * ```js
+ * const mm = require('micromatch');
+ * // mm.matchKeys(object, patterns[, options]);
+ *
+ * const obj = { aa: 'a', ab: 'b', ac: 'c' };
+ * console.log(mm.matchKeys(obj, '*b'));
+ * //=> { ab: 'b' }
+ * ```
+ * @param {Object} `object` The object with keys to filter.
+ * @param {String|Array} `patterns` One or more glob patterns to use for matching.
+ * @param {Object} `options` See available [options](#options) for changing how matches are performed
+ * @return {Object} Returns an object with only keys that match the given patterns.
+ * @api public
+ */
+
+micromatch.matchKeys = (obj, patterns, options) => {
+  if (!utils.isObject(obj)) {
+    throw new TypeError('Expected the first argument to be an object');
+  }
+  let keys = micromatch(Object.keys(obj), patterns, options);
+  let res = {};
+  for (let key of keys) res[key] = obj[key];
+  return res;
+};
+
+/**
+ * Returns true if some of the strings in the given `list` match any of the given glob `patterns`.
+ *
+ * ```js
+ * const mm = require('micromatch');
+ * // mm.some(list, patterns[, options]);
+ *
+ * console.log(mm.some(['foo.js', 'bar.js'], ['*.js', '!foo.js']));
+ * // true
+ * console.log(mm.some(['foo.js'], ['*.js', '!foo.js']));
+ * // false
+ * ```
+ * @param {String|Array} `list` The string or array of strings to test. Returns as soon as the first match is found.
+ * @param {String|Array} `patterns` One or more glob patterns to use for matching.
+ * @param {Object} `options` See available [options](#options) for changing how matches are performed
+ * @return {Boolean} Returns true if any patterns match `str`
+ * @api public
+ */
+
+micromatch.some = (list, patterns, options) => {
+  let items = [].concat(list);
+
+  for (let pattern of [].concat(patterns)) {
+    let isMatch = picomatch(String(pattern), options);
+    if (items.some(item => isMatch(item))) {
+      return true;
+    }
+  }
+  return false;
+};
+
+/**
+ * Returns true if every string in the given `list` matches
+ * any of the given glob `patterns`.
+ *
+ * ```js
+ * const mm = require('micromatch');
+ * // mm.every(list, patterns[, options]);
+ *
+ * console.log(mm.every('foo.js', ['foo.js']));
+ * // true
+ * console.log(mm.every(['foo.js', 'bar.js'], ['*.js']));
+ * // true
+ * console.log(mm.every(['foo.js', 'bar.js'], ['*.js', '!foo.js']));
+ * // false
+ * console.log(mm.every(['foo.js'], ['*.js', '!foo.js']));
+ * // false
+ * ```
+ * @param {String|Array} `list` The string or array of strings to test.
+ * @param {String|Array} `patterns` One or more glob patterns to use for matching.
+ * @param {Object} `options` See available [options](#options) for changing how matches are performed
+ * @return {Boolean} Returns true if any patterns match `str`
+ * @api public
+ */
+
+micromatch.every = (list, patterns, options) => {
+  let items = [].concat(list);
+
+  for (let pattern of [].concat(patterns)) {
+    let isMatch = picomatch(String(pattern), options);
+    if (!items.every(item => isMatch(item))) {
+      return false;
+    }
+  }
+  return true;
+};
+
+/**
+ * Returns true if **all** of the given `patterns` match
+ * the specified string.
+ *
+ * ```js
+ * const mm = require('micromatch');
+ * // mm.all(string, patterns[, options]);
+ *
+ * console.log(mm.all('foo.js', ['foo.js']));
+ * // true
+ *
+ * console.log(mm.all('foo.js', ['*.js', '!foo.js']));
+ * // false
+ *
+ * console.log(mm.all('foo.js', ['*.js', 'foo.js']));
+ * // true
+ *
+ * console.log(mm.all('foo.js', ['*.js', 'f*', '*o*', '*o.js']));
+ * // true
+ * ```
+ * @param {String|Array} `str` The string to test.
+ * @param {String|Array} `patterns` One or more glob patterns to use for matching.
+ * @param {Object} `options` See available [options](#options) for changing how matches are performed
+ * @return {Boolean} Returns true if any patterns match `str`
+ * @api public
+ */
+
+micromatch.all = (str, patterns, options) => {
+  if (typeof str !== 'string') {
+    throw new TypeError(`Expected a string: "${util.inspect(str)}"`);
+  }
+
+  return [].concat(patterns).every(p => picomatch(p, options)(str));
+};
+
+/**
+ * Returns an array of matches captured by `pattern` in `string, or `null` if the pattern did not match.
+ *
+ * ```js
+ * const mm = require('micromatch');
+ * // mm.capture(pattern, string[, options]);
+ *
+ * console.log(mm.capture('test/*.js', 'test/foo.js'));
+ * //=> ['foo']
+ * console.log(mm.capture('test/*.js', 'foo/bar.css'));
+ * //=> null
+ * ```
+ * @param {String} `glob` Glob pattern to use for matching.
+ * @param {String} `input` String to match
+ * @param {Object} `options` See available [options](#options) for changing how matches are performed
+ * @return {Boolean} Returns an array of captures if the input matches the glob pattern, otherwise `null`.
+ * @api public
+ */
+
+micromatch.capture = (glob, input, options) => {
+  let posix = utils.isWindows(options);
+  let regex = picomatch.makeRe(String(glob), { ...options, capture: true });
+  let match = regex.exec(posix ? utils.toPosixSlashes(input) : input);
+
+  if (match) {
+    return match.slice(1).map(v => v === void 0 ? '' : v);
+  }
+};
+
+/**
+ * Create a regular expression from the given glob `pattern`.
+ *
+ * ```js
+ * const mm = require('micromatch');
+ * // mm.makeRe(pattern[, options]);
+ *
+ * console.log(mm.makeRe('*.js'));
+ * //=> /^(?:(\.[\\\/])?(?!\.)(?=.)[^\/]*?\.js)$/
+ * ```
+ * @param {String} `pattern` A glob pattern to convert to regex.
+ * @param {Object} `options`
+ * @return {RegExp} Returns a regex created from the given pattern.
+ * @api public
+ */
+
+micromatch.makeRe = (...args) => picomatch.makeRe(...args);
+
+/**
+ * Scan a glob pattern to separate the pattern into segments. Used
+ * by the [split](#split) method.
+ *
+ * ```js
+ * const mm = require('micromatch');
+ * const state = mm.scan(pattern[, options]);
+ * ```
+ * @param {String} `pattern`
+ * @param {Object} `options`
+ * @return {Object} Returns an object with
+ * @api public
+ */
+
+micromatch.scan = (...args) => picomatch.scan(...args);
+
+/**
+ * Parse a glob pattern to create the source string for a regular
+ * expression.
+ *
+ * ```js
+ * const mm = require('micromatch');
+ * const state = mm(pattern[, options]);
+ * ```
+ * @param {String} `glob`
+ * @param {Object} `options`
+ * @return {Object} Returns an object with useful properties and output to be used as regex source string.
+ * @api public
+ */
+
+micromatch.parse = (patterns, options) => {
+  let res = [];
+  for (let pattern of [].concat(patterns || [])) {
+    for (let str of braces(String(pattern), options)) {
+      res.push(picomatch.parse(str, options));
+    }
+  }
+  return res;
+};
+
+/**
+ * Process the given brace `pattern`.
+ *
+ * ```js
+ * const { braces } = require('micromatch');
+ * console.log(braces('foo/{a,b,c}/bar'));
+ * //=> [ 'foo/(a|b|c)/bar' ]
+ *
+ * console.log(braces('foo/{a,b,c}/bar', { expand: true }));
+ * //=> [ 'foo/a/bar', 'foo/b/bar', 'foo/c/bar' ]
+ * ```
+ * @param {String} `pattern` String with brace pattern to process.
+ * @param {Object} `options` Any [options](#options) to change how expansion is performed. See the [braces][] library for all available options.
+ * @return {Array}
+ * @api public
+ */
+
+micromatch.braces = (pattern, options) => {
+  if (typeof pattern !== 'string') throw new TypeError('Expected a string');
+  if ((options && options.nobrace === true) || !/\{.*\}/.test(pattern)) {
+    return [pattern];
+  }
+  return braces(pattern, options);
+};
+
+/**
+ * Expand braces
+ */
+
+micromatch.braceExpand = (pattern, options) => {
+  if (typeof pattern !== 'string') throw new TypeError('Expected a string');
+  return micromatch.braces(pattern, { ...options, expand: true });
+};
+
+/**
+ * Expose micromatch
+ */
+
+module.exports = micromatch;
+
+
+/***/ }),
 /* 431 */
 /***/ (function(__unusedmodule, exports, __webpack_require__) {
 
@@ -22761,7 +22579,7 @@ const array = __webpack_require__(231);
 exports.array = array;
 const errno = __webpack_require__(115);
 exports.errno = errno;
-const fs = __webpack_require__(676);
+const fs = __webpack_require__(43);
 exports.fs = fs;
 const path = __webpack_require__(418);
 exports.path = path;
@@ -22769,7 +22587,7 @@ const pattern = __webpack_require__(724);
 exports.pattern = pattern;
 const stream = __webpack_require__(42);
 exports.stream = stream;
-const string = __webpack_require__(884);
+const string = __webpack_require__(394);
 exports.string = string;
 
 
@@ -24595,62 +24413,29 @@ exports.FetchError = FetchError;
 /* 455 */,
 /* 456 */,
 /* 457 */,
-/* 458 */,
-/* 459 */,
-/* 460 */,
-/* 461 */,
-/* 462 */
+/* 458 */
 /***/ (function(module) {
 
-"use strict";
-
-
-// See http://www.robvanderwoude.com/escapechars.php
-const metaCharsRegExp = /([()\][%!^"`<>&|;, *?])/g;
-
-function escapeCommand(arg) {
-    // Escape meta chars
-    arg = arg.replace(metaCharsRegExp, '^$1');
-
-    return arg;
-}
-
-function escapeArgument(arg, doubleEscapeMetaChars) {
-    // Convert to string
-    arg = `${arg}`;
-
-    // Algorithm below is based on https://qntm.org/cmd
-
-    // Sequence of backslashes followed by a double quote:
-    // double up all the backslashes and escape the double quote
-    arg = arg.replace(/(\\*)"/g, '$1$1\\"');
-
-    // Sequence of backslashes followed by the end of the string
-    // (which will become a double quote later):
-    // double up all the backslashes
-    arg = arg.replace(/(\\*)$/, '$1$1');
-
-    // All other backslashes occur literally
-
-    // Quote the whole thing:
-    arg = `"${arg}"`;
-
-    // Escape meta chars
-    arg = arg.replace(metaCharsRegExp, '^$1');
-
-    // Double escape meta chars if necessary
-    if (doubleEscapeMetaChars) {
-        arg = arg.replace(metaCharsRegExp, '^$1');
+module.exports = function (xs, fn) {
+    var res = [];
+    for (var i = 0; i < xs.length; i++) {
+        var x = fn(xs[i], i);
+        if (isArray(x)) res.push.apply(res, x);
+        else res.push(x);
     }
+    return res;
+};
 
-    return arg;
-}
-
-module.exports.command = escapeCommand;
-module.exports.argument = escapeArgument;
+var isArray = Array.isArray || function (xs) {
+    return Object.prototype.toString.call(xs) === '[object Array]';
+};
 
 
 /***/ }),
+/* 459 */,
+/* 460 */,
+/* 461 */,
+/* 462 */,
 /* 463 */
 /***/ (function(__unusedmodule, exports, __webpack_require__) {
 
@@ -25322,60 +25107,7 @@ module.exports = function isGlob(str, options) {
 /***/ }),
 /* 487 */,
 /* 488 */,
-/* 489 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-"use strict";
-
-
-const path = __webpack_require__(622);
-const which = __webpack_require__(814);
-const pathKey = __webpack_require__(39)();
-
-function resolveCommandAttempt(parsed, withoutPathExt) {
-    const cwd = process.cwd();
-    const hasCustomCwd = parsed.options.cwd != null;
-
-    // If a custom `cwd` was specified, we need to change the process cwd
-    // because `which` will do stat calls but does not support a custom cwd
-    if (hasCustomCwd) {
-        try {
-            process.chdir(parsed.options.cwd);
-        } catch (err) {
-            /* Empty */
-        }
-    }
-
-    let resolved;
-
-    try {
-        resolved = which.sync(parsed.command, {
-            path: (parsed.options.env || process.env)[pathKey],
-            pathExt: withoutPathExt ? path.delimiter : undefined,
-        });
-    } catch (e) {
-        /* Empty */
-    } finally {
-        process.chdir(cwd);
-    }
-
-    // If we successfully resolved, ensure that an absolute path is returned
-    // Note that when a custom `cwd` was used, we need to resolve to an absolute path based on it
-    if (resolved) {
-        resolved = path.resolve(hasCustomCwd ? parsed.options.cwd : '', resolved);
-    }
-
-    return resolved;
-}
-
-function resolveCommand(parsed) {
-    return resolveCommandAttempt(parsed) || resolveCommandAttempt(parsed, true);
-}
-
-module.exports = resolveCommand;
-
-
-/***/ }),
+/* 489 */,
 /* 490 */,
 /* 491 */,
 /* 492 */,
@@ -25390,7 +25122,224 @@ module.exports = resolveCommand;
 /* 501 */,
 /* 502 */,
 /* 503 */,
-/* 504 */,
+/* 504 */
+/***/ (function(__unusedmodule, exports, __webpack_require__) {
+
+var common = __webpack_require__(602);
+var _cd = __webpack_require__(8);
+var path = __webpack_require__(622);
+
+common.register('dirs', _dirs, {
+  wrapOutput: false,
+});
+common.register('pushd', _pushd, {
+  wrapOutput: false,
+});
+common.register('popd', _popd, {
+  wrapOutput: false,
+});
+
+// Pushd/popd/dirs internals
+var _dirStack = [];
+
+function _isStackIndex(index) {
+  return (/^[\-+]\d+$/).test(index);
+}
+
+function _parseStackIndex(index) {
+  if (_isStackIndex(index)) {
+    if (Math.abs(index) < _dirStack.length + 1) { // +1 for pwd
+      return (/^-/).test(index) ? Number(index) - 1 : Number(index);
+    }
+    common.error(index + ': directory stack index out of range');
+  } else {
+    common.error(index + ': invalid number');
+  }
+}
+
+function _actualDirStack() {
+  return [process.cwd()].concat(_dirStack);
+}
+
+//@
+//@ ### pushd([options,] [dir | '-N' | '+N'])
+//@
+//@ Available options:
+//@
+//@ + `-n`: Suppresses the normal change of directory when adding directories to the stack, so that only the stack is manipulated.
+//@ + `-q`: Supresses output to the console.
+//@
+//@ Arguments:
+//@
+//@ + `dir`: Sets the current working directory to the top of the stack, then executes the equivalent of `cd dir`.
+//@ + `+N`: Brings the Nth directory (counting from the left of the list printed by dirs, starting with zero) to the top of the list by rotating the stack.
+//@ + `-N`: Brings the Nth directory (counting from the right of the list printed by dirs, starting with zero) to the top of the list by rotating the stack.
+//@
+//@ Examples:
+//@
+//@ ```javascript
+//@ // process.cwd() === '/usr'
+//@ pushd('/etc'); // Returns /etc /usr
+//@ pushd('+1');   // Returns /usr /etc
+//@ ```
+//@
+//@ Save the current directory on the top of the directory stack and then `cd` to `dir`. With no arguments, `pushd` exchanges the top two directories. Returns an array of paths in the stack.
+function _pushd(options, dir) {
+  if (_isStackIndex(options)) {
+    dir = options;
+    options = '';
+  }
+
+  options = common.parseOptions(options, {
+    'n': 'no-cd',
+    'q': 'quiet',
+  });
+
+  var dirs = _actualDirStack();
+
+  if (dir === '+0') {
+    return dirs; // +0 is a noop
+  } else if (!dir) {
+    if (dirs.length > 1) {
+      dirs = dirs.splice(1, 1).concat(dirs);
+    } else {
+      return common.error('no other directory');
+    }
+  } else if (_isStackIndex(dir)) {
+    var n = _parseStackIndex(dir);
+    dirs = dirs.slice(n).concat(dirs.slice(0, n));
+  } else {
+    if (options['no-cd']) {
+      dirs.splice(1, 0, dir);
+    } else {
+      dirs.unshift(dir);
+    }
+  }
+
+  if (options['no-cd']) {
+    dirs = dirs.slice(1);
+  } else {
+    dir = path.resolve(dirs.shift());
+    _cd('', dir);
+  }
+
+  _dirStack = dirs;
+  return _dirs(options.quiet ? '-q' : '');
+}
+exports.pushd = _pushd;
+
+//@
+//@
+//@ ### popd([options,] ['-N' | '+N'])
+//@
+//@ Available options:
+//@
+//@ + `-n`: Suppress the normal directory change when removing directories from the stack, so that only the stack is manipulated.
+//@ + `-q`: Supresses output to the console.
+//@
+//@ Arguments:
+//@
+//@ + `+N`: Removes the Nth directory (counting from the left of the list printed by dirs), starting with zero.
+//@ + `-N`: Removes the Nth directory (counting from the right of the list printed by dirs), starting with zero.
+//@
+//@ Examples:
+//@
+//@ ```javascript
+//@ echo(process.cwd()); // '/usr'
+//@ pushd('/etc');       // '/etc /usr'
+//@ echo(process.cwd()); // '/etc'
+//@ popd();              // '/usr'
+//@ echo(process.cwd()); // '/usr'
+//@ ```
+//@
+//@ When no arguments are given, `popd` removes the top directory from the stack and performs a `cd` to the new top directory. The elements are numbered from 0, starting at the first directory listed with dirs (i.e., `popd` is equivalent to `popd +0`). Returns an array of paths in the stack.
+function _popd(options, index) {
+  if (_isStackIndex(options)) {
+    index = options;
+    options = '';
+  }
+
+  options = common.parseOptions(options, {
+    'n': 'no-cd',
+    'q': 'quiet',
+  });
+
+  if (!_dirStack.length) {
+    return common.error('directory stack empty');
+  }
+
+  index = _parseStackIndex(index || '+0');
+
+  if (options['no-cd'] || index > 0 || _dirStack.length + index === 0) {
+    index = index > 0 ? index - 1 : index;
+    _dirStack.splice(index, 1);
+  } else {
+    var dir = path.resolve(_dirStack.shift());
+    _cd('', dir);
+  }
+
+  return _dirs(options.quiet ? '-q' : '');
+}
+exports.popd = _popd;
+
+//@
+//@
+//@ ### dirs([options | '+N' | '-N'])
+//@
+//@ Available options:
+//@
+//@ + `-c`: Clears the directory stack by deleting all of the elements.
+//@ + `-q`: Supresses output to the console.
+//@
+//@ Arguments:
+//@
+//@ + `+N`: Displays the Nth directory (counting from the left of the list printed by dirs when invoked without options), starting with zero.
+//@ + `-N`: Displays the Nth directory (counting from the right of the list printed by dirs when invoked without options), starting with zero.
+//@
+//@ Display the list of currently remembered directories. Returns an array of paths in the stack, or a single path if `+N` or `-N` was specified.
+//@
+//@ See also: `pushd`, `popd`
+function _dirs(options, index) {
+  if (_isStackIndex(options)) {
+    index = options;
+    options = '';
+  }
+
+  options = common.parseOptions(options, {
+    'c': 'clear',
+    'q': 'quiet',
+  });
+
+  if (options.clear) {
+    _dirStack = [];
+    return _dirStack;
+  }
+
+  var stack = _actualDirStack();
+
+  if (index) {
+    index = _parseStackIndex(index);
+
+    if (index < 0) {
+      index = stack.length + index;
+    }
+
+    if (!options.quiet) {
+      common.log(stack[index]);
+    }
+    return stack[index];
+  }
+
+  if (!options.quiet) {
+    common.log(stack.join(' '));
+  }
+
+  return stack;
+}
+exports.dirs = _dirs;
+
+
+/***/ }),
 /* 505 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
@@ -25647,8 +25596,8 @@ exports.default = ReaderSync;
 Object.defineProperty(exports, "__esModule", { value: true });
 const async_1 = __webpack_require__(387);
 const stream_1 = __webpack_require__(798);
-const sync_1 = __webpack_require__(381);
-const settings_1 = __webpack_require__(973);
+const sync_1 = __webpack_require__(833);
+const settings_1 = __webpack_require__(611);
 exports.Settings = settings_1.default;
 function walk(directory, optionsOrSettingsOrCallback, callback) {
     if (typeof optionsOrSettingsOrCallback === 'function') {
@@ -25681,9 +25630,9 @@ function getSettings(settingsOrOptions = {}) {
 /* 523 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
-var register = __webpack_require__(280)
+var register = __webpack_require__(363)
 var addHook = __webpack_require__(510)
-var removeHook = __webpack_require__(763)
+var removeHook = __webpack_require__(881)
 
 // bind with array of arguments: https://stackoverflow.com/a/21792913
 var bind = Function.bind
@@ -25758,7 +25707,7 @@ module.exports.Collection = Hook.Collection
  * See http://pajhome.org.uk/crypt/md5 for details.
  */
 
-var inherits = __webpack_require__(689)
+var inherits = __webpack_require__(938)
 var Hash = __webpack_require__(61)
 var Buffer = __webpack_require__(149).Buffer
 
@@ -25851,192 +25800,7 @@ module.exports = Sha1
 
 
 /***/ }),
-/* 530 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-"use strict";
-
-
-const path = __webpack_require__(622);
-const WIN_SLASH = '\\\\/';
-const WIN_NO_SLASH = `[^${WIN_SLASH}]`;
-
-/**
- * Posix glob regex
- */
-
-const DOT_LITERAL = '\\.';
-const PLUS_LITERAL = '\\+';
-const QMARK_LITERAL = '\\?';
-const SLASH_LITERAL = '\\/';
-const ONE_CHAR = '(?=.)';
-const QMARK = '[^/]';
-const END_ANCHOR = `(?:${SLASH_LITERAL}|$)`;
-const START_ANCHOR = `(?:^|${SLASH_LITERAL})`;
-const DOTS_SLASH = `${DOT_LITERAL}{1,2}${END_ANCHOR}`;
-const NO_DOT = `(?!${DOT_LITERAL})`;
-const NO_DOTS = `(?!${START_ANCHOR}${DOTS_SLASH})`;
-const NO_DOT_SLASH = `(?!${DOT_LITERAL}{0,1}${END_ANCHOR})`;
-const NO_DOTS_SLASH = `(?!${DOTS_SLASH})`;
-const QMARK_NO_DOT = `[^.${SLASH_LITERAL}]`;
-const STAR = `${QMARK}*?`;
-
-const POSIX_CHARS = {
-  DOT_LITERAL,
-  PLUS_LITERAL,
-  QMARK_LITERAL,
-  SLASH_LITERAL,
-  ONE_CHAR,
-  QMARK,
-  END_ANCHOR,
-  DOTS_SLASH,
-  NO_DOT,
-  NO_DOTS,
-  NO_DOT_SLASH,
-  NO_DOTS_SLASH,
-  QMARK_NO_DOT,
-  STAR,
-  START_ANCHOR
-};
-
-/**
- * Windows glob regex
- */
-
-const WINDOWS_CHARS = {
-  ...POSIX_CHARS,
-
-  SLASH_LITERAL: `[${WIN_SLASH}]`,
-  QMARK: WIN_NO_SLASH,
-  STAR: `${WIN_NO_SLASH}*?`,
-  DOTS_SLASH: `${DOT_LITERAL}{1,2}(?:[${WIN_SLASH}]|$)`,
-  NO_DOT: `(?!${DOT_LITERAL})`,
-  NO_DOTS: `(?!(?:^|[${WIN_SLASH}])${DOT_LITERAL}{1,2}(?:[${WIN_SLASH}]|$))`,
-  NO_DOT_SLASH: `(?!${DOT_LITERAL}{0,1}(?:[${WIN_SLASH}]|$))`,
-  NO_DOTS_SLASH: `(?!${DOT_LITERAL}{1,2}(?:[${WIN_SLASH}]|$))`,
-  QMARK_NO_DOT: `[^.${WIN_SLASH}]`,
-  START_ANCHOR: `(?:^|[${WIN_SLASH}])`,
-  END_ANCHOR: `(?:[${WIN_SLASH}]|$)`
-};
-
-/**
- * POSIX Bracket Regex
- */
-
-const POSIX_REGEX_SOURCE = {
-  alnum: 'a-zA-Z0-9',
-  alpha: 'a-zA-Z',
-  ascii: '\\x00-\\x7F',
-  blank: ' \\t',
-  cntrl: '\\x00-\\x1F\\x7F',
-  digit: '0-9',
-  graph: '\\x21-\\x7E',
-  lower: 'a-z',
-  print: '\\x20-\\x7E ',
-  punct: '\\-!"#$%&\'()\\*+,./:;<=>?@[\\]^_`{|}~',
-  space: ' \\t\\r\\n\\v\\f',
-  upper: 'A-Z',
-  word: 'A-Za-z0-9_',
-  xdigit: 'A-Fa-f0-9'
-};
-
-module.exports = {
-  MAX_LENGTH: 1024 * 64,
-  POSIX_REGEX_SOURCE,
-
-  // regular expressions
-  REGEX_BACKSLASH: /\\(?![*+?^${}(|)[\]])/g,
-  REGEX_NON_SPECIAL_CHARS: /^[^@![\].,$*+?^{}()|\\/]+/,
-  REGEX_SPECIAL_CHARS: /[-*+?.^${}(|)[\]]/,
-  REGEX_SPECIAL_CHARS_BACKREF: /(\\?)((\W)(\3*))/g,
-  REGEX_SPECIAL_CHARS_GLOBAL: /([-*+?.^${}(|)[\]])/g,
-  REGEX_REMOVE_BACKSLASH: /(?:\[.*?[^\\]\]|\\(?=.))/g,
-
-  // Replace globs with equivalent patterns to reduce parsing time.
-  REPLACEMENTS: {
-    '***': '*',
-    '**/**': '**',
-    '**/**/**': '**'
-  },
-
-  // Digits
-  CHAR_0: 48, /* 0 */
-  CHAR_9: 57, /* 9 */
-
-  // Alphabet chars.
-  CHAR_UPPERCASE_A: 65, /* A */
-  CHAR_LOWERCASE_A: 97, /* a */
-  CHAR_UPPERCASE_Z: 90, /* Z */
-  CHAR_LOWERCASE_Z: 122, /* z */
-
-  CHAR_LEFT_PARENTHESES: 40, /* ( */
-  CHAR_RIGHT_PARENTHESES: 41, /* ) */
-
-  CHAR_ASTERISK: 42, /* * */
-
-  // Non-alphabetic chars.
-  CHAR_AMPERSAND: 38, /* & */
-  CHAR_AT: 64, /* @ */
-  CHAR_BACKWARD_SLASH: 92, /* \ */
-  CHAR_CARRIAGE_RETURN: 13, /* \r */
-  CHAR_CIRCUMFLEX_ACCENT: 94, /* ^ */
-  CHAR_COLON: 58, /* : */
-  CHAR_COMMA: 44, /* , */
-  CHAR_DOT: 46, /* . */
-  CHAR_DOUBLE_QUOTE: 34, /* " */
-  CHAR_EQUAL: 61, /* = */
-  CHAR_EXCLAMATION_MARK: 33, /* ! */
-  CHAR_FORM_FEED: 12, /* \f */
-  CHAR_FORWARD_SLASH: 47, /* / */
-  CHAR_GRAVE_ACCENT: 96, /* ` */
-  CHAR_HASH: 35, /* # */
-  CHAR_HYPHEN_MINUS: 45, /* - */
-  CHAR_LEFT_ANGLE_BRACKET: 60, /* < */
-  CHAR_LEFT_CURLY_BRACE: 123, /* { */
-  CHAR_LEFT_SQUARE_BRACKET: 91, /* [ */
-  CHAR_LINE_FEED: 10, /* \n */
-  CHAR_NO_BREAK_SPACE: 160, /* \u00A0 */
-  CHAR_PERCENT: 37, /* % */
-  CHAR_PLUS: 43, /* + */
-  CHAR_QUESTION_MARK: 63, /* ? */
-  CHAR_RIGHT_ANGLE_BRACKET: 62, /* > */
-  CHAR_RIGHT_CURLY_BRACE: 125, /* } */
-  CHAR_RIGHT_SQUARE_BRACKET: 93, /* ] */
-  CHAR_SEMICOLON: 59, /* ; */
-  CHAR_SINGLE_QUOTE: 39, /* ' */
-  CHAR_SPACE: 32, /*   */
-  CHAR_TAB: 9, /* \t */
-  CHAR_UNDERSCORE: 95, /* _ */
-  CHAR_VERTICAL_LINE: 124, /* | */
-  CHAR_ZERO_WIDTH_NOBREAK_SPACE: 65279, /* \uFEFF */
-
-  SEP: path.sep,
-
-  /**
-   * Create EXTGLOB_CHARS
-   */
-
-  extglobChars(chars) {
-    return {
-      '!': { type: 'negate', open: '(?:(?!(?:', close: `))${chars.STAR})` },
-      '?': { type: 'qmark', open: '(?:', close: ')?' },
-      '+': { type: 'plus', open: '(?:', close: ')+' },
-      '*': { type: 'star', open: '(?:', close: ')*' },
-      '@': { type: 'at', open: '(?:', close: ')' }
-    };
-  },
-
-  /**
-   * Create GLOB_CHARS
-   */
-
-  globChars(win32) {
-    return win32 === true ? WINDOWS_CHARS : POSIX_CHARS;
-  }
-};
-
-
-/***/ }),
+/* 530 */,
 /* 531 */,
 /* 532 */,
 /* 533 */,
@@ -26136,47 +25900,392 @@ function hasFirstPage (link) {
 
 /***/ }),
 /* 537 */
-/***/ (function(module) {
+/***/ (function(module, __unusedexports, __webpack_require__) {
 
 "use strict";
 
 
-// We define these manually to ensure they're always copied
-// even if they would move up the prototype chain
-// https://nodejs.org/api/http.html#http_class_http_incomingmessage
-const knownProperties = [
-	'aborted',
-	'complete',
-	'destroy',
-	'headers',
-	'httpVersion',
-	'httpVersionMinor',
-	'httpVersionMajor',
-	'method',
-	'rawHeaders',
-	'rawTrailers',
-	'setTimeout',
-	'socket',
-	'statusCode',
-	'statusMessage',
-	'trailers',
-	'url'
-];
+const utils = __webpack_require__(224);
+const {
+  CHAR_ASTERISK,             /* * */
+  CHAR_AT,                   /* @ */
+  CHAR_BACKWARD_SLASH,       /* \ */
+  CHAR_COMMA,                /* , */
+  CHAR_DOT,                  /* . */
+  CHAR_EXCLAMATION_MARK,     /* ! */
+  CHAR_FORWARD_SLASH,        /* / */
+  CHAR_LEFT_CURLY_BRACE,     /* { */
+  CHAR_LEFT_PARENTHESES,     /* ( */
+  CHAR_LEFT_SQUARE_BRACKET,  /* [ */
+  CHAR_PLUS,                 /* + */
+  CHAR_QUESTION_MARK,        /* ? */
+  CHAR_RIGHT_CURLY_BRACE,    /* } */
+  CHAR_RIGHT_PARENTHESES,    /* ) */
+  CHAR_RIGHT_SQUARE_BRACKET  /* ] */
+} = __webpack_require__(199);
 
-module.exports = (fromStream, toStream) => {
-	const fromProperties = new Set(Object.keys(fromStream).concat(knownProperties));
-
-	for (const property of fromProperties) {
-		// Don't overwrite existing properties.
-		if (property in toStream) {
-			continue;
-		}
-
-		toStream[property] = typeof fromStream[property] === 'function' ? fromStream[property].bind(fromStream) : fromStream[property];
-	}
-
-	return toStream;
+const isPathSeparator = code => {
+  return code === CHAR_FORWARD_SLASH || code === CHAR_BACKWARD_SLASH;
 };
+
+const depth = token => {
+  if (token.isPrefix !== true) {
+    token.depth = token.isGlobstar ? Infinity : 1;
+  }
+};
+
+/**
+ * Quickly scans a glob pattern and returns an object with a handful of
+ * useful properties, like `isGlob`, `path` (the leading non-glob, if it exists),
+ * `glob` (the actual pattern), and `negated` (true if the path starts with `!`).
+ *
+ * ```js
+ * const pm = require('picomatch');
+ * console.log(pm.scan('foo/bar/*.js'));
+ * { isGlob: true, input: 'foo/bar/*.js', base: 'foo/bar', glob: '*.js' }
+ * ```
+ * @param {String} `str`
+ * @param {Object} `options`
+ * @return {Object} Returns an object with tokens and regex source string.
+ * @api public
+ */
+
+const scan = (input, options) => {
+  const opts = options || {};
+
+  const length = input.length - 1;
+  const scanToEnd = opts.parts === true || opts.scanToEnd === true;
+  const slashes = [];
+  const tokens = [];
+  const parts = [];
+
+  let str = input;
+  let index = -1;
+  let start = 0;
+  let lastIndex = 0;
+  let isBrace = false;
+  let isBracket = false;
+  let isGlob = false;
+  let isExtglob = false;
+  let isGlobstar = false;
+  let braceEscaped = false;
+  let backslashes = false;
+  let negated = false;
+  let finished = false;
+  let braces = 0;
+  let prev;
+  let code;
+  let token = { value: '', depth: 0, isGlob: false };
+
+  const eos = () => index >= length;
+  const peek = () => str.charCodeAt(index + 1);
+  const advance = () => {
+    prev = code;
+    return str.charCodeAt(++index);
+  };
+
+  while (index < length) {
+    code = advance();
+    let next;
+
+    if (code === CHAR_BACKWARD_SLASH) {
+      backslashes = token.backslashes = true;
+      code = advance();
+
+      if (code === CHAR_LEFT_CURLY_BRACE) {
+        braceEscaped = true;
+      }
+      continue;
+    }
+
+    if (braceEscaped === true || code === CHAR_LEFT_CURLY_BRACE) {
+      braces++;
+
+      while (eos() !== true && (code = advance())) {
+        if (code === CHAR_BACKWARD_SLASH) {
+          backslashes = token.backslashes = true;
+          advance();
+          continue;
+        }
+
+        if (code === CHAR_LEFT_CURLY_BRACE) {
+          braces++;
+          continue;
+        }
+
+        if (braceEscaped !== true && code === CHAR_DOT && (code = advance()) === CHAR_DOT) {
+          isBrace = token.isBrace = true;
+          isGlob = token.isGlob = true;
+          finished = true;
+
+          if (scanToEnd === true) {
+            continue;
+          }
+
+          break;
+        }
+
+        if (braceEscaped !== true && code === CHAR_COMMA) {
+          isBrace = token.isBrace = true;
+          isGlob = token.isGlob = true;
+          finished = true;
+
+          if (scanToEnd === true) {
+            continue;
+          }
+
+          break;
+        }
+
+        if (code === CHAR_RIGHT_CURLY_BRACE) {
+          braces--;
+
+          if (braces === 0) {
+            braceEscaped = false;
+            isBrace = token.isBrace = true;
+            finished = true;
+            break;
+          }
+        }
+      }
+
+      if (scanToEnd === true) {
+        continue;
+      }
+
+      break;
+    }
+
+    if (code === CHAR_FORWARD_SLASH) {
+      slashes.push(index);
+      tokens.push(token);
+      token = { value: '', depth: 0, isGlob: false };
+
+      if (finished === true) continue;
+      if (prev === CHAR_DOT && index === (start + 1)) {
+        start += 2;
+        continue;
+      }
+
+      lastIndex = index + 1;
+      continue;
+    }
+
+    if (opts.noext !== true) {
+      const isExtglobChar = code === CHAR_PLUS
+        || code === CHAR_AT
+        || code === CHAR_ASTERISK
+        || code === CHAR_QUESTION_MARK
+        || code === CHAR_EXCLAMATION_MARK;
+
+      if (isExtglobChar === true && peek() === CHAR_LEFT_PARENTHESES) {
+        isGlob = token.isGlob = true;
+        isExtglob = token.isExtglob = true;
+        finished = true;
+
+        if (scanToEnd === true) {
+          while (eos() !== true && (code = advance())) {
+            if (code === CHAR_BACKWARD_SLASH) {
+              backslashes = token.backslashes = true;
+              code = advance();
+              continue;
+            }
+
+            if (code === CHAR_RIGHT_PARENTHESES) {
+              isGlob = token.isGlob = true;
+              finished = true;
+              break;
+            }
+          }
+          continue;
+        }
+        break;
+      }
+    }
+
+    if (code === CHAR_ASTERISK) {
+      if (prev === CHAR_ASTERISK) isGlobstar = token.isGlobstar = true;
+      isGlob = token.isGlob = true;
+      finished = true;
+
+      if (scanToEnd === true) {
+        continue;
+      }
+      break;
+    }
+
+    if (code === CHAR_QUESTION_MARK) {
+      isGlob = token.isGlob = true;
+      finished = true;
+
+      if (scanToEnd === true) {
+        continue;
+      }
+      break;
+    }
+
+    if (code === CHAR_LEFT_SQUARE_BRACKET) {
+      while (eos() !== true && (next = advance())) {
+        if (next === CHAR_BACKWARD_SLASH) {
+          backslashes = token.backslashes = true;
+          advance();
+          continue;
+        }
+
+        if (next === CHAR_RIGHT_SQUARE_BRACKET) {
+          isBracket = token.isBracket = true;
+          isGlob = token.isGlob = true;
+          finished = true;
+
+          if (scanToEnd === true) {
+            continue;
+          }
+          break;
+        }
+      }
+    }
+
+    if (opts.nonegate !== true && code === CHAR_EXCLAMATION_MARK && index === start) {
+      negated = token.negated = true;
+      start++;
+      continue;
+    }
+
+    if (opts.noparen !== true && code === CHAR_LEFT_PARENTHESES) {
+      isGlob = token.isGlob = true;
+
+      if (scanToEnd === true) {
+        while (eos() !== true && (code = advance())) {
+          if (code === CHAR_LEFT_PARENTHESES) {
+            backslashes = token.backslashes = true;
+            code = advance();
+            continue;
+          }
+
+          if (code === CHAR_RIGHT_PARENTHESES) {
+            finished = true;
+            break;
+          }
+        }
+        continue;
+      }
+      break;
+    }
+
+    if (isGlob === true) {
+      finished = true;
+
+      if (scanToEnd === true) {
+        continue;
+      }
+
+      break;
+    }
+  }
+
+  if (opts.noext === true) {
+    isExtglob = false;
+    isGlob = false;
+  }
+
+  let base = str;
+  let prefix = '';
+  let glob = '';
+
+  if (start > 0) {
+    prefix = str.slice(0, start);
+    str = str.slice(start);
+    lastIndex -= start;
+  }
+
+  if (base && isGlob === true && lastIndex > 0) {
+    base = str.slice(0, lastIndex);
+    glob = str.slice(lastIndex);
+  } else if (isGlob === true) {
+    base = '';
+    glob = str;
+  } else {
+    base = str;
+  }
+
+  if (base && base !== '' && base !== '/' && base !== str) {
+    if (isPathSeparator(base.charCodeAt(base.length - 1))) {
+      base = base.slice(0, -1);
+    }
+  }
+
+  if (opts.unescape === true) {
+    if (glob) glob = utils.removeBackslashes(glob);
+
+    if (base && backslashes === true) {
+      base = utils.removeBackslashes(base);
+    }
+  }
+
+  const state = {
+    prefix,
+    input,
+    start,
+    base,
+    glob,
+    isBrace,
+    isBracket,
+    isGlob,
+    isExtglob,
+    isGlobstar,
+    negated
+  };
+
+  if (opts.tokens === true) {
+    state.maxDepth = 0;
+    if (!isPathSeparator(code)) {
+      tokens.push(token);
+    }
+    state.tokens = tokens;
+  }
+
+  if (opts.parts === true || opts.tokens === true) {
+    let prevIndex;
+
+    for (let idx = 0; idx < slashes.length; idx++) {
+      const n = prevIndex ? prevIndex + 1 : start;
+      const i = slashes[idx];
+      const value = input.slice(n, i);
+      if (opts.tokens) {
+        if (idx === 0 && start !== 0) {
+          tokens[idx].isPrefix = true;
+          tokens[idx].value = prefix;
+        } else {
+          tokens[idx].value = value;
+        }
+        depth(tokens[idx]);
+        state.maxDepth += tokens[idx].depth;
+      }
+      if (idx !== 0 || value !== '') {
+        parts.push(value);
+      }
+      prevIndex = i;
+    }
+
+    if (prevIndex && prevIndex + 1 < input.length) {
+      const value = input.slice(prevIndex + 1);
+      parts.push(value);
+
+      if (opts.tokens) {
+        tokens[tokens.length - 1].value = value;
+        depth(tokens[tokens.length - 1]);
+        state.maxDepth += tokens[tokens.length - 1].depth;
+      }
+    }
+
+    state.slashes = slashes;
+    state.parts = parts;
+  }
+
+  return state;
+};
+
+module.exports = scan;
 
 
 /***/ }),
@@ -26717,220 +26826,56 @@ exports.HttpClient = HttpClient;
 /* 540 */,
 /* 541 */,
 /* 542 */
-/***/ (function(__unusedmodule, exports, __webpack_require__) {
+/***/ (function(module, __unusedexports, __webpack_require__) {
 
-var common = __webpack_require__(602);
-var _cd = __webpack_require__(8);
-var path = __webpack_require__(622);
+"use strict";
 
-common.register('dirs', _dirs, {
-  wrapOutput: false,
-});
-common.register('pushd', _pushd, {
-  wrapOutput: false,
-});
-common.register('popd', _popd, {
-  wrapOutput: false,
-});
 
-// Pushd/popd/dirs internals
-var _dirStack = [];
+const path = __webpack_require__(622);
+const which = __webpack_require__(814);
+const pathKey = __webpack_require__(39)();
 
-function _isStackIndex(index) {
-  return (/^[\-+]\d+$/).test(index);
-}
+function resolveCommandAttempt(parsed, withoutPathExt) {
+    const cwd = process.cwd();
+    const hasCustomCwd = parsed.options.cwd != null;
 
-function _parseStackIndex(index) {
-  if (_isStackIndex(index)) {
-    if (Math.abs(index) < _dirStack.length + 1) { // +1 for pwd
-      return (/^-/).test(index) ? Number(index) - 1 : Number(index);
-    }
-    common.error(index + ': directory stack index out of range');
-  } else {
-    common.error(index + ': invalid number');
-  }
-}
-
-function _actualDirStack() {
-  return [process.cwd()].concat(_dirStack);
-}
-
-//@
-//@ ### pushd([options,] [dir | '-N' | '+N'])
-//@
-//@ Available options:
-//@
-//@ + `-n`: Suppresses the normal change of directory when adding directories to the stack, so that only the stack is manipulated.
-//@ + `-q`: Supresses output to the console.
-//@
-//@ Arguments:
-//@
-//@ + `dir`: Sets the current working directory to the top of the stack, then executes the equivalent of `cd dir`.
-//@ + `+N`: Brings the Nth directory (counting from the left of the list printed by dirs, starting with zero) to the top of the list by rotating the stack.
-//@ + `-N`: Brings the Nth directory (counting from the right of the list printed by dirs, starting with zero) to the top of the list by rotating the stack.
-//@
-//@ Examples:
-//@
-//@ ```javascript
-//@ // process.cwd() === '/usr'
-//@ pushd('/etc'); // Returns /etc /usr
-//@ pushd('+1');   // Returns /usr /etc
-//@ ```
-//@
-//@ Save the current directory on the top of the directory stack and then `cd` to `dir`. With no arguments, `pushd` exchanges the top two directories. Returns an array of paths in the stack.
-function _pushd(options, dir) {
-  if (_isStackIndex(options)) {
-    dir = options;
-    options = '';
-  }
-
-  options = common.parseOptions(options, {
-    'n': 'no-cd',
-    'q': 'quiet',
-  });
-
-  var dirs = _actualDirStack();
-
-  if (dir === '+0') {
-    return dirs; // +0 is a noop
-  } else if (!dir) {
-    if (dirs.length > 1) {
-      dirs = dirs.splice(1, 1).concat(dirs);
-    } else {
-      return common.error('no other directory');
-    }
-  } else if (_isStackIndex(dir)) {
-    var n = _parseStackIndex(dir);
-    dirs = dirs.slice(n).concat(dirs.slice(0, n));
-  } else {
-    if (options['no-cd']) {
-      dirs.splice(1, 0, dir);
-    } else {
-      dirs.unshift(dir);
-    }
-  }
-
-  if (options['no-cd']) {
-    dirs = dirs.slice(1);
-  } else {
-    dir = path.resolve(dirs.shift());
-    _cd('', dir);
-  }
-
-  _dirStack = dirs;
-  return _dirs(options.quiet ? '-q' : '');
-}
-exports.pushd = _pushd;
-
-//@
-//@
-//@ ### popd([options,] ['-N' | '+N'])
-//@
-//@ Available options:
-//@
-//@ + `-n`: Suppress the normal directory change when removing directories from the stack, so that only the stack is manipulated.
-//@ + `-q`: Supresses output to the console.
-//@
-//@ Arguments:
-//@
-//@ + `+N`: Removes the Nth directory (counting from the left of the list printed by dirs), starting with zero.
-//@ + `-N`: Removes the Nth directory (counting from the right of the list printed by dirs), starting with zero.
-//@
-//@ Examples:
-//@
-//@ ```javascript
-//@ echo(process.cwd()); // '/usr'
-//@ pushd('/etc');       // '/etc /usr'
-//@ echo(process.cwd()); // '/etc'
-//@ popd();              // '/usr'
-//@ echo(process.cwd()); // '/usr'
-//@ ```
-//@
-//@ When no arguments are given, `popd` removes the top directory from the stack and performs a `cd` to the new top directory. The elements are numbered from 0, starting at the first directory listed with dirs (i.e., `popd` is equivalent to `popd +0`). Returns an array of paths in the stack.
-function _popd(options, index) {
-  if (_isStackIndex(options)) {
-    index = options;
-    options = '';
-  }
-
-  options = common.parseOptions(options, {
-    'n': 'no-cd',
-    'q': 'quiet',
-  });
-
-  if (!_dirStack.length) {
-    return common.error('directory stack empty');
-  }
-
-  index = _parseStackIndex(index || '+0');
-
-  if (options['no-cd'] || index > 0 || _dirStack.length + index === 0) {
-    index = index > 0 ? index - 1 : index;
-    _dirStack.splice(index, 1);
-  } else {
-    var dir = path.resolve(_dirStack.shift());
-    _cd('', dir);
-  }
-
-  return _dirs(options.quiet ? '-q' : '');
-}
-exports.popd = _popd;
-
-//@
-//@
-//@ ### dirs([options | '+N' | '-N'])
-//@
-//@ Available options:
-//@
-//@ + `-c`: Clears the directory stack by deleting all of the elements.
-//@ + `-q`: Supresses output to the console.
-//@
-//@ Arguments:
-//@
-//@ + `+N`: Displays the Nth directory (counting from the left of the list printed by dirs when invoked without options), starting with zero.
-//@ + `-N`: Displays the Nth directory (counting from the right of the list printed by dirs when invoked without options), starting with zero.
-//@
-//@ Display the list of currently remembered directories. Returns an array of paths in the stack, or a single path if `+N` or `-N` was specified.
-//@
-//@ See also: `pushd`, `popd`
-function _dirs(options, index) {
-  if (_isStackIndex(options)) {
-    index = options;
-    options = '';
-  }
-
-  options = common.parseOptions(options, {
-    'c': 'clear',
-    'q': 'quiet',
-  });
-
-  if (options.clear) {
-    _dirStack = [];
-    return _dirStack;
-  }
-
-  var stack = _actualDirStack();
-
-  if (index) {
-    index = _parseStackIndex(index);
-
-    if (index < 0) {
-      index = stack.length + index;
+    // If a custom `cwd` was specified, we need to change the process cwd
+    // because `which` will do stat calls but does not support a custom cwd
+    if (hasCustomCwd) {
+        try {
+            process.chdir(parsed.options.cwd);
+        } catch (err) {
+            /* Empty */
+        }
     }
 
-    if (!options.quiet) {
-      common.log(stack[index]);
+    let resolved;
+
+    try {
+        resolved = which.sync(parsed.command, {
+            path: (parsed.options.env || process.env)[pathKey],
+            pathExt: withoutPathExt ? path.delimiter : undefined,
+        });
+    } catch (e) {
+        /* Empty */
+    } finally {
+        process.chdir(cwd);
     }
-    return stack[index];
-  }
 
-  if (!options.quiet) {
-    common.log(stack.join(' '));
-  }
+    // If we successfully resolved, ensure that an absolute path is returned
+    // Note that when a custom `cwd` was used, we need to resolve to an absolute path based on it
+    if (resolved) {
+        resolved = path.resolve(hasCustomCwd ? parsed.options.cwd : '', resolved);
+    }
 
-  return stack;
+    return resolved;
 }
-exports.dirs = _dirs;
+
+function resolveCommand(parsed) {
+    return resolveCommandAttempt(parsed) || resolveCommandAttempt(parsed, true);
+}
+
+module.exports = resolveCommand;
 
 
 /***/ }),
@@ -40656,138 +40601,7 @@ module.exports = (input, options) => {
 
 
 /***/ }),
-/* 568 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-"use strict";
-
-
-const path = __webpack_require__(622);
-const niceTry = __webpack_require__(948);
-const resolveCommand = __webpack_require__(489);
-const escape = __webpack_require__(462);
-const readShebang = __webpack_require__(389);
-const semver = __webpack_require__(48);
-
-const isWin = process.platform === 'win32';
-const isExecutableRegExp = /\.(?:com|exe)$/i;
-const isCmdShimRegExp = /node_modules[\\/].bin[\\/][^\\/]+\.cmd$/i;
-
-// `options.shell` is supported in Node ^4.8.0, ^5.7.0 and >= 6.0.0
-const supportsShellOption = niceTry(() => semver.satisfies(process.version, '^4.8.0 || ^5.7.0 || >= 6.0.0', true)) || false;
-
-function detectShebang(parsed) {
-    parsed.file = resolveCommand(parsed);
-
-    const shebang = parsed.file && readShebang(parsed.file);
-
-    if (shebang) {
-        parsed.args.unshift(parsed.file);
-        parsed.command = shebang;
-
-        return resolveCommand(parsed);
-    }
-
-    return parsed.file;
-}
-
-function parseNonShell(parsed) {
-    if (!isWin) {
-        return parsed;
-    }
-
-    // Detect & add support for shebangs
-    const commandFile = detectShebang(parsed);
-
-    // We don't need a shell if the command filename is an executable
-    const needsShell = !isExecutableRegExp.test(commandFile);
-
-    // If a shell is required, use cmd.exe and take care of escaping everything correctly
-    // Note that `forceShell` is an hidden option used only in tests
-    if (parsed.options.forceShell || needsShell) {
-        // Need to double escape meta chars if the command is a cmd-shim located in `node_modules/.bin/`
-        // The cmd-shim simply calls execute the package bin file with NodeJS, proxying any argument
-        // Because the escape of metachars with ^ gets interpreted when the cmd.exe is first called,
-        // we need to double escape them
-        const needsDoubleEscapeMetaChars = isCmdShimRegExp.test(commandFile);
-
-        // Normalize posix paths into OS compatible paths (e.g.: foo/bar -> foo\bar)
-        // This is necessary otherwise it will always fail with ENOENT in those cases
-        parsed.command = path.normalize(parsed.command);
-
-        // Escape command & arguments
-        parsed.command = escape.command(parsed.command);
-        parsed.args = parsed.args.map((arg) => escape.argument(arg, needsDoubleEscapeMetaChars));
-
-        const shellCommand = [parsed.command].concat(parsed.args).join(' ');
-
-        parsed.args = ['/d', '/s', '/c', `"${shellCommand}"`];
-        parsed.command = process.env.comspec || 'cmd.exe';
-        parsed.options.windowsVerbatimArguments = true; // Tell node's spawn that the arguments are already escaped
-    }
-
-    return parsed;
-}
-
-function parseShell(parsed) {
-    // If node supports the shell option, there's no need to mimic its behavior
-    if (supportsShellOption) {
-        return parsed;
-    }
-
-    // Mimic node shell option
-    // See https://github.com/nodejs/node/blob/b9f6a2dc059a1062776133f3d4fd848c4da7d150/lib/child_process.js#L335
-    const shellCommand = [parsed.command].concat(parsed.args).join(' ');
-
-    if (isWin) {
-        parsed.command = typeof parsed.options.shell === 'string' ? parsed.options.shell : process.env.comspec || 'cmd.exe';
-        parsed.args = ['/d', '/s', '/c', `"${shellCommand}"`];
-        parsed.options.windowsVerbatimArguments = true; // Tell node's spawn that the arguments are already escaped
-    } else {
-        if (typeof parsed.options.shell === 'string') {
-            parsed.command = parsed.options.shell;
-        } else if (process.platform === 'android') {
-            parsed.command = '/system/bin/sh';
-        } else {
-            parsed.command = '/bin/sh';
-        }
-
-        parsed.args = ['-c', shellCommand];
-    }
-
-    return parsed;
-}
-
-function parse(command, args, options) {
-    // Normalize arguments, similar to nodejs
-    if (args && !Array.isArray(args)) {
-        options = args;
-        args = null;
-    }
-
-    args = args ? args.slice(0) : []; // Clone array to avoid changing the original
-    options = Object.assign({}, options); // Clone object to avoid changing the original
-
-    // Build our parsed object
-    const parsed = {
-        command,
-        args,
-        options,
-        file: undefined,
-        original: {
-            command,
-            args,
-        },
-    };
-
-    // Delegate further parsing to shell or non-shell
-    return options.shell ? parseShell(parsed) : parseNonShell(parsed);
-}
-
-module.exports = parse;
-
-
-/***/ }),
+/* 568 */,
 /* 569 */,
 /* 570 */,
 /* 571 */,
@@ -40969,7 +40783,7 @@ module.exports = _head;
 Object.defineProperty(exports, "__esModule", { value: true });
 const path = __webpack_require__(622);
 const deep_1 = __webpack_require__(887);
-const entry_1 = __webpack_require__(793);
+const entry_1 = __webpack_require__(703);
 const error_1 = __webpack_require__(375);
 const entry_2 = __webpack_require__(317);
 class Provider {
@@ -41512,7 +41326,7 @@ function _register(name, implementation, wrapOptions) {
   // If an option isn't specified, use the default
   wrapOptions = Object.assign({}, DEFAULT_WRAP_OPTIONS, wrapOptions);
 
-  if (shell[name]) {
+  if (shell.hasOwnProperty(name)) {
     throw new Error('Command `' + name + '` already exists');
   }
 
@@ -41603,282 +41417,85 @@ exports.default = ReaderStream;
 
 
 /***/ }),
-/* 609 */,
-/* 610 */,
-/* 611 */
+/* 609 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
-// Copyright (c) 2006, 2008 Tony Garnock-Jones <tonyg@lshift.net>
-// Copyright (c) 2006, 2008 LShift Ltd. <query@lshift.net>
-//
-// Permission is hereby granted, free of charge, to any person
-// obtaining a copy of this software and associated documentation files
-// (the "Software"), to deal in the Software without restriction,
-// including without limitation the rights to use, copy, modify, merge,
-// publish, distribute, sublicense, and/or sell copies of the Software,
-// and to permit persons to whom the Software is furnished to do so,
-// subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be
-// included in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
-// BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
-// ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+"use strict";
 
-var onp = __webpack_require__(290);
 
-function longestCommonSubsequence(file1, file2) {
-  var diff = new onp(file1, file2);
-  diff.compose();
-  var ses = diff.getses();
+var isGlob = __webpack_require__(486);
+var pathPosixDirname = __webpack_require__(622).posix.dirname;
+var isWin32 = __webpack_require__(87).platform() === 'win32';
 
-  var root;
-  var prev;
-  var file1RevIdx = file1.length - 1,
-      file2RevIdx = file2.length - 1;
-  for (var i = ses.length - 1; i >= 0; --i) {
-      if (ses[i].t === diff.SES_COMMON) {
-        if (prev) {
-          prev.chain = {
-            file1index: file1RevIdx,
-            file2index: file2RevIdx,
-            chain: null
-          };
-          prev = prev.chain;
-        } else {
-          root = {
-            file1index: file1RevIdx,
-            file2index: file2RevIdx,
-            chain: null
-          };
-          prev = root;
-        }
-        file1RevIdx--;
-        file2RevIdx--;
-      } else if (ses[i].t === diff.SES_DELETE) {
-        file1RevIdx--;
-      } else if (ses[i].t === diff.SES_ADD) {
-        file2RevIdx--;
-      }
+var slash = '/';
+var backslash = /\\/g;
+var enclosure = /[\{\[].*[\/]*.*[\}\]]$/;
+var globby = /(^|[^\\])([\{\[]|\([^\)]+$)/;
+var escaped = /\\([\!\*\?\|\[\]\(\)\{\}])/g;
+
+/**
+ * @param {string} str
+ * @param {Object} opts
+ * @param {boolean} [opts.flipBackslashes=true]
+ */
+module.exports = function globParent(str, opts) {
+  var options = Object.assign({ flipBackslashes: true }, opts);
+
+  // flip windows path separators
+  if (options.flipBackslashes && isWin32 && str.indexOf(slash) < 0) {
+    str = str.replace(backslash, slash);
   }
 
-  var tail = {
-    file1index: -1,
-    file2index: -1,
-    chain: null
-  };
-
-  if (!prev) {
-    return tail;
+  // special case for strings ending in enclosure containing path separator
+  if (enclosure.test(str)) {
+    str += slash;
   }
 
-  prev.chain = tail;
+  // preserves full path in case of trailing path separator
+  str += 'a';
 
-  return root;
-}
+  // remove path parts that are globby
+  do {
+    str = pathPosixDirname(str);
+  } while (isGlob(str) || globby.test(str));
 
-function diffIndices(file1, file2) {
-  // We apply the LCS to give a simple representation of the
-  // offsets and lengths of mismatched chunks in the input
-  // files. This is used by diff3_merge_indices below.
+  // remove escape chars and return result
+  return str.replace(escaped, '$1');
+};
 
-  var result = [];
-  var tail1 = file1.length;
-  var tail2 = file2.length;
 
-  for (var candidate = longestCommonSubsequence(file1, file2); candidate !== null; candidate = candidate.chain) {
-    var mismatchLength1 = tail1 - candidate.file1index - 1;
-    var mismatchLength2 = tail2 - candidate.file2index - 1;
-    tail1 = candidate.file1index;
-    tail2 = candidate.file2index;
+/***/ }),
+/* 610 */,
+/* 611 */
+/***/ (function(__unusedmodule, exports, __webpack_require__) {
 
-    if (mismatchLength1 || mismatchLength2) {
-      result.push({
-        file1: [tail1 + 1, mismatchLength1],
-        file2: [tail2 + 1, mismatchLength2]
-      });
-    }
-  }
+"use strict";
 
-  result.reverse();
-  return result;
-}
-
-function diff3MergeIndices(a, o, b) {
-  // Given three files, A, O, and B, where both A and B are
-  // independently derived from O, returns a fairly complicated
-  // internal representation of merge decisions it's taken. The
-  // interested reader may wish to consult
-  //
-  // Sanjeev Khanna, Keshav Kunal, and Benjamin C. Pierce. "A
-  // Formal Investigation of Diff3." In Arvind and Prasad,
-  // editors, Foundations of Software Technology and Theoretical
-  // Computer Science (FSTTCS), December 2007.
-  //
-  // (http://www.cis.upenn.edu/~bcpierce/papers/diff3-short.pdf)
-  var i;
-
-  var m1 = diffIndices(o, a);
-  var m2 = diffIndices(o, b);
-
-  var hunks = [];
-
-  function addHunk(h, side) {
-    hunks.push([h.file1[0], side, h.file1[1], h.file2[0], h.file2[1]]);
-  }
-  for (i = 0; i < m1.length; i++) {
-    addHunk(m1[i], 0);
-  }
-  for (i = 0; i < m2.length; i++) {
-    addHunk(m2[i], 2);
-  }
-  hunks.sort(function(x, y) {
-    return x[0] - y[0]
-  });
-
-  var result = [];
-  var commonOffset = 0;
-
-  function copyCommon(targetOffset) {
-    if (targetOffset > commonOffset) {
-      result.push([1, commonOffset, targetOffset - commonOffset]);
-      commonOffset = targetOffset;
-    }
-  }
-
-  for (var hunkIndex = 0; hunkIndex < hunks.length; hunkIndex++) {
-    var firstHunkIndex = hunkIndex;
-    var hunk = hunks[hunkIndex];
-    var regionLhs = hunk[0];
-    var regionRhs = regionLhs + hunk[2];
-    while (hunkIndex < hunks.length - 1) {
-      var maybeOverlapping = hunks[hunkIndex + 1];
-      var maybeLhs = maybeOverlapping[0];
-      if (maybeLhs > regionRhs) break;
-      regionRhs = Math.max(regionRhs, maybeLhs + maybeOverlapping[2]);
-      hunkIndex++;
-    }
-
-    copyCommon(regionLhs);
-    if (firstHunkIndex == hunkIndex) {
-      // The "overlap" was only one hunk long, meaning that
-      // there's no conflict here. Either a and o were the
-      // same, or b and o were the same.
-      if (hunk[4] > 0) {
-        result.push([hunk[1], hunk[3], hunk[4]]);
-      }
-    } else {
-      // A proper conflict. Determine the extents of the
-      // regions involved from a, o and b. Effectively merge
-      // all the hunks on the left into one giant hunk, and
-      // do the same for the right; then, correct for skew
-      // in the regions of o that each side changed, and
-      // report appropriate spans for the three sides.
-      var regions = {
-        0: [a.length, -1, o.length, -1],
-        2: [b.length, -1, o.length, -1]
-      };
-      for (i = firstHunkIndex; i <= hunkIndex; i++) {
-        hunk = hunks[i];
-        var side = hunk[1];
-        var r = regions[side];
-        var oLhs = hunk[0];
-        var oRhs = oLhs + hunk[2];
-        var abLhs = hunk[3];
-        var abRhs = abLhs + hunk[4];
-        r[0] = Math.min(abLhs, r[0]);
-        r[1] = Math.max(abRhs, r[1]);
-        r[2] = Math.min(oLhs, r[2]);
-        r[3] = Math.max(oRhs, r[3]);
-      }
-      var aLhs = regions[0][0] + (regionLhs - regions[0][2]);
-      var aRhs = regions[0][1] + (regionRhs - regions[0][3]);
-      var bLhs = regions[2][0] + (regionLhs - regions[2][2]);
-      var bRhs = regions[2][1] + (regionRhs - regions[2][3]);
-      result.push([-1,
-        aLhs, aRhs - aLhs,
-        regionLhs, regionRhs - regionLhs,
-        bLhs, bRhs - bLhs
-      ]);
-    }
-    commonOffset = regionRhs;
-  }
-
-  copyCommon(o.length);
-  return result;
-}
-
-function diff3Merge(a, o, b) {
-  // Applies the output of Diff.diff3_merge_indices to actually
-  // construct the merged file; the returned result alternates
-  // between "ok" and "conflict" blocks.
-
-  var result = [];
-  var files = [a, o, b];
-  var indices = diff3MergeIndices(a, o, b);
-
-  var okLines = [];
-
-  function flushOk() {
-    if (okLines.length) {
-      result.push({
-        ok: okLines
-      });
-    }
-    okLines = [];
-  }
-
-  function pushOk(xs) {
-    for (var j = 0; j < xs.length; j++) {
-      okLines.push(xs[j]);
-    }
-  }
-
-  function isTrueConflict(rec) {
-    if (rec[2] != rec[6]) return true;
-    var aoff = rec[1];
-    var boff = rec[5];
-    for (var j = 0; j < rec[2]; j++) {
-      if (a[j + aoff] != b[j + boff]) return true;
-    }
-    return false;
-  }
-
-  for (var i = 0; i < indices.length; i++) {
-    var x = indices[i];
-    var side = x[0];
-    if (side == -1) {
-      if (!isTrueConflict(x)) {
-        pushOk(files[0].slice(x[1], x[1] + x[2]));
-      } else {
-        flushOk();
-        result.push({
-          conflict: {
-            a: a.slice(x[1], x[1] + x[2]),
-            aIndex: x[1],
-            o: o.slice(x[3], x[3] + x[4]),
-            oIndex: x[3],
-            b: b.slice(x[5], x[5] + x[6]),
-            bIndex: x[5]
-          }
+Object.defineProperty(exports, "__esModule", { value: true });
+const path = __webpack_require__(622);
+const fsScandir = __webpack_require__(661);
+class Settings {
+    constructor(_options = {}) {
+        this._options = _options;
+        this.basePath = this._getValue(this._options.basePath, undefined);
+        this.concurrency = this._getValue(this._options.concurrency, Infinity);
+        this.deepFilter = this._getValue(this._options.deepFilter, null);
+        this.entryFilter = this._getValue(this._options.entryFilter, null);
+        this.errorFilter = this._getValue(this._options.errorFilter, null);
+        this.pathSegmentSeparator = this._getValue(this._options.pathSegmentSeparator, path.sep);
+        this.fsScandirSettings = new fsScandir.Settings({
+            followSymbolicLinks: this._options.followSymbolicLinks,
+            fs: this._options.fs,
+            pathSegmentSeparator: this._options.pathSegmentSeparator,
+            stats: this._options.stats,
+            throwErrorOnBrokenSymbolicLink: this._options.throwErrorOnBrokenSymbolicLink
         });
-      }
-    } else {
-      pushOk(files[side].slice(x[1], x[1] + x[2]));
     }
-  }
-
-  flushOk();
-  return result;
+    _getValue(option, value) {
+        return option === undefined ? value : option;
+    }
 }
-
-module.exports = diff3Merge;
+exports.default = Settings;
 
 
 /***/ }),
@@ -42555,108 +42172,33 @@ module.exports = _find;
 /***/ }),
 /* 660 */,
 /* 661 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
+/***/ (function(__unusedmodule, exports, __webpack_require__) {
 
-var common = __webpack_require__(602);
-var fs = __webpack_require__(747);
-var path = __webpack_require__(622);
+"use strict";
 
-common.register('mkdir', _mkdir, {
-  cmdOptions: {
-    'p': 'fullpath',
-  },
-});
-
-// Recursively creates `dir`
-function mkdirSyncRecursive(dir) {
-  var baseDir = path.dirname(dir);
-
-  // Prevents some potential problems arising from malformed UNCs or
-  // insufficient permissions.
-  /* istanbul ignore next */
-  if (baseDir === dir) {
-    common.error('dirname() failed: [' + dir + ']');
-  }
-
-  // Base dir exists, no recursion necessary
-  if (fs.existsSync(baseDir)) {
-    fs.mkdirSync(dir, parseInt('0777', 8));
-    return;
-  }
-
-  // Base dir does not exist, go recursive
-  mkdirSyncRecursive(baseDir);
-
-  // Base dir created, can create dir
-  fs.mkdirSync(dir, parseInt('0777', 8));
+Object.defineProperty(exports, "__esModule", { value: true });
+const async = __webpack_require__(182);
+const sync = __webpack_require__(148);
+const settings_1 = __webpack_require__(403);
+exports.Settings = settings_1.default;
+function scandir(path, optionsOrSettingsOrCallback, callback) {
+    if (typeof optionsOrSettingsOrCallback === 'function') {
+        return async.read(path, getSettings(), optionsOrSettingsOrCallback);
+    }
+    async.read(path, getSettings(optionsOrSettingsOrCallback), callback);
 }
-
-//@
-//@ ### mkdir([options,] dir [, dir ...])
-//@ ### mkdir([options,] dir_array)
-//@
-//@ Available options:
-//@
-//@ + `-p`: full path (and create intermediate directories, if necessary)
-//@
-//@ Examples:
-//@
-//@ ```javascript
-//@ mkdir('-p', '/tmp/a/b/c/d', '/tmp/e/f/g');
-//@ mkdir('-p', ['/tmp/a/b/c/d', '/tmp/e/f/g']); // same as above
-//@ ```
-//@
-//@ Creates directories.
-function _mkdir(options, dirs) {
-  if (!dirs) common.error('no paths given');
-
-  if (typeof dirs === 'string') {
-    dirs = [].slice.call(arguments, 1);
-  }
-  // if it's array leave it as it is
-
-  dirs.forEach(function (dir) {
-    try {
-      var stat = common.statNoFollowLinks(dir);
-      if (!options.fullpath) {
-        common.error('path already exists: ' + dir, { continue: true });
-      } else if (stat.isFile()) {
-        common.error('cannot create directory ' + dir + ': File exists', { continue: true });
-      }
-      return; // skip dir
-    } catch (e) {
-      // do nothing
+exports.scandir = scandir;
+function scandirSync(path, optionsOrSettings) {
+    const settings = getSettings(optionsOrSettings);
+    return sync.read(path, settings);
+}
+exports.scandirSync = scandirSync;
+function getSettings(settingsOrOptions = {}) {
+    if (settingsOrOptions instanceof settings_1.default) {
+        return settingsOrOptions;
     }
-
-    // Base dir does not exist, and no -p option given
-    var baseDir = path.dirname(dir);
-    if (!fs.existsSync(baseDir) && !options.fullpath) {
-      common.error('no such file or directory: ' + baseDir, { continue: true });
-      return; // skip dir
-    }
-
-    try {
-      if (options.fullpath) {
-        mkdirSyncRecursive(path.resolve(dir));
-      } else {
-        fs.mkdirSync(dir, parseInt('0777', 8));
-      }
-    } catch (e) {
-      var reason;
-      if (e.code === 'EACCES') {
-        reason = 'Permission denied';
-      } else if (e.code === 'ENOTDIR' || e.code === 'ENOENT') {
-        reason = 'Not a directory';
-      } else {
-        /* istanbul ignore next */
-        throw e;
-      }
-      common.error('cannot create directory ' + dir + ': ' + reason, { continue: true });
-    }
-  });
-  return '';
-} // mkdir
-module.exports = _mkdir;
+    return new settings_1.default(settingsOrOptions);
+}
 
 
 /***/ }),
@@ -42988,31 +42530,7 @@ module.exports = function btoa(str) {
 
 
 /***/ }),
-/* 676 */
-/***/ (function(__unusedmodule, exports) {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", { value: true });
-class DirentFromStats {
-    constructor(name, stats) {
-        this.name = name;
-        this.isBlockDevice = stats.isBlockDevice.bind(stats);
-        this.isCharacterDevice = stats.isCharacterDevice.bind(stats);
-        this.isDirectory = stats.isDirectory.bind(stats);
-        this.isFIFO = stats.isFIFO.bind(stats);
-        this.isFile = stats.isFile.bind(stats);
-        this.isSocket = stats.isSocket.bind(stats);
-        this.isSymbolicLink = stats.isSymbolicLink.bind(stats);
-    }
-}
-function createDirentFromStats(name, stats) {
-    return new DirentFromStats(name, stats);
-}
-exports.createDirentFromStats = createDirentFromStats;
-
-
-/***/ }),
+/* 676 */,
 /* 677 */,
 /* 678 */,
 /* 679 */,
@@ -43403,15 +42921,180 @@ module.exports = function inflate_table(type, lens, lens_index, codes, table, ta
 /* 689 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
-try {
-  var util = __webpack_require__(669);
-  /* istanbul ignore next */
-  if (typeof util.inherits !== 'function') throw '';
-  module.exports = util.inherits;
-} catch (e) {
-  /* istanbul ignore next */
-  module.exports = __webpack_require__(315);
+"use strict";
+
+
+var reusify = __webpack_require__(440)
+
+function fastqueue (context, worker, concurrency) {
+  if (typeof context === 'function') {
+    concurrency = worker
+    worker = context
+    context = null
+  }
+
+  var cache = reusify(Task)
+  var queueHead = null
+  var queueTail = null
+  var _running = 0
+
+  var self = {
+    push: push,
+    drain: noop,
+    saturated: noop,
+    pause: pause,
+    paused: false,
+    concurrency: concurrency,
+    running: running,
+    resume: resume,
+    idle: idle,
+    length: length,
+    unshift: unshift,
+    empty: noop,
+    kill: kill,
+    killAndDrain: killAndDrain
+  }
+
+  return self
+
+  function running () {
+    return _running
+  }
+
+  function pause () {
+    self.paused = true
+  }
+
+  function length () {
+    var current = queueHead
+    var counter = 0
+
+    while (current) {
+      current = current.next
+      counter++
+    }
+
+    return counter
+  }
+
+  function resume () {
+    if (!self.paused) return
+    self.paused = false
+    for (var i = 0; i < self.concurrency; i++) {
+      _running++
+      release()
+    }
+  }
+
+  function idle () {
+    return _running === 0 && self.length() === 0
+  }
+
+  function push (value, done) {
+    var current = cache.get()
+
+    current.context = context
+    current.release = release
+    current.value = value
+    current.callback = done || noop
+
+    if (_running === self.concurrency || self.paused) {
+      if (queueTail) {
+        queueTail.next = current
+        queueTail = current
+      } else {
+        queueHead = current
+        queueTail = current
+        self.saturated()
+      }
+    } else {
+      _running++
+      worker.call(context, current.value, current.worked)
+    }
+  }
+
+  function unshift (value, done) {
+    var current = cache.get()
+
+    current.context = context
+    current.release = release
+    current.value = value
+    current.callback = done || noop
+
+    if (_running === self.concurrency || self.paused) {
+      if (queueHead) {
+        current.next = queueHead
+        queueHead = current
+      } else {
+        queueHead = current
+        queueTail = current
+        self.saturated()
+      }
+    } else {
+      _running++
+      worker.call(context, current.value, current.worked)
+    }
+  }
+
+  function release (holder) {
+    if (holder) {
+      cache.release(holder)
+    }
+    var next = queueHead
+    if (next) {
+      if (!self.paused) {
+        if (queueTail === queueHead) {
+          queueTail = null
+        }
+        queueHead = next.next
+        next.next = null
+        worker.call(context, next.value, next.worked)
+        if (queueTail === null) {
+          self.empty()
+        }
+      } else {
+        _running--
+      }
+    } else if (--_running === 0) {
+      self.drain()
+    }
+  }
+
+  function kill () {
+    queueHead = null
+    queueTail = null
+    self.drain = noop
+  }
+
+  function killAndDrain () {
+    queueHead = null
+    queueTail = null
+    self.drain()
+    self.drain = noop
+  }
 }
+
+function noop () {}
+
+function Task () {
+  this.value = null
+  this.callback = noop
+  this.next = null
+  this.release = noop
+  this.context = null
+
+  var self = this
+
+  this.worked = function worked (err, result) {
+    var callback = self.callback
+    self.value = null
+    self.callback = noop
+    callback.call(self.context, err, result)
+    self.release(self)
+  }
+}
+
+module.exports = fastqueue
 
 
 /***/ }),
@@ -43733,7 +43416,85 @@ module.exports = _exec;
 
 /***/ }),
 /* 694 */,
-/* 695 */,
+/* 695 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+var common = __webpack_require__(602);
+var fs = __webpack_require__(747);
+
+common.register('grep', _grep, {
+  globStart: 2, // don't glob-expand the regex
+  canReceivePipe: true,
+  cmdOptions: {
+    'v': 'inverse',
+    'l': 'nameOnly',
+    'i': 'ignoreCase',
+  },
+});
+
+//@
+//@ ### grep([options,] regex_filter, file [, file ...])
+//@ ### grep([options,] regex_filter, file_array)
+//@
+//@ Available options:
+//@
+//@ + `-v`: Invert `regex_filter` (only print non-matching lines).
+//@ + `-l`: Print only filenames of matching files.
+//@ + `-i`: Ignore case.
+//@
+//@ Examples:
+//@
+//@ ```javascript
+//@ grep('-v', 'GLOBAL_VARIABLE', '*.js');
+//@ grep('GLOBAL_VARIABLE', '*.js');
+//@ ```
+//@
+//@ Reads input string from given files and returns a string containing all lines of the
+//@ file that match the given `regex_filter`.
+function _grep(options, regex, files) {
+  // Check if this is coming from a pipe
+  var pipe = common.readFromPipe();
+
+  if (!files && !pipe) common.error('no paths given', 2);
+
+  files = [].slice.call(arguments, 2);
+
+  if (pipe) {
+    files.unshift('-');
+  }
+
+  var grep = [];
+  if (options.ignoreCase) {
+    regex = new RegExp(regex, 'i');
+  }
+  files.forEach(function (file) {
+    if (!fs.existsSync(file) && file !== '-') {
+      common.error('no such file or directory: ' + file, 2, { continue: true });
+      return;
+    }
+
+    var contents = file === '-' ? pipe : fs.readFileSync(file, 'utf8');
+    if (options.nameOnly) {
+      if (contents.match(regex)) {
+        grep.push(file);
+      }
+    } else {
+      var lines = contents.split('\n');
+      lines.forEach(function (line) {
+        var matched = line.match(regex);
+        if ((options.inverse && !matched) || (!options.inverse && matched)) {
+          grep.push(line);
+        }
+      });
+    }
+  });
+
+  return grep.join('\n') + '\n';
+}
+module.exports = _grep;
+
+
+/***/ }),
 /* 696 */
 /***/ (function(module) {
 
@@ -43817,42 +43578,65 @@ module.exports = (promise, onFinally) => {
 /* 701 */,
 /* 702 */,
 /* 703 */
-/***/ (function(module) {
+/***/ (function(__unusedmodule, exports, __webpack_require__) {
 
 "use strict";
 
-
-function escapeRegExp(string) {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
-}
-
-function replaceAll(str, search, replacement) {
-  search = search instanceof RegExp ? search : new RegExp(escapeRegExp(search), 'g');
-
-  return str.replace(search, replacement);
-}
-
-var CleanGitRef = {
-  clean: function clean(value) {
-    if (typeof value !== 'string') {
-      throw new Error('Expected a string, received: ' + value);
+Object.defineProperty(exports, "__esModule", { value: true });
+const utils = __webpack_require__(444);
+class EntryFilter {
+    constructor(_settings, _micromatchOptions) {
+        this._settings = _settings;
+        this._micromatchOptions = _micromatchOptions;
+        this.index = new Map();
     }
+    getFilter(positive, negative) {
+        const positiveRe = utils.pattern.convertPatternsToRe(positive, this._micromatchOptions);
+        const negativeRe = utils.pattern.convertPatternsToRe(negative, this._micromatchOptions);
+        return (entry) => this._filter(entry, positiveRe, negativeRe);
+    }
+    _filter(entry, positiveRe, negativeRe) {
+        if (this._settings.unique) {
+            if (this._isDuplicateEntry(entry)) {
+                return false;
+            }
+            this._createIndexRecord(entry);
+        }
+        if (this._onlyFileFilter(entry) || this._onlyDirectoryFilter(entry)) {
+            return false;
+        }
+        if (this._isSkippedByAbsoluteNegativePatterns(entry, negativeRe)) {
+            return false;
+        }
+        const filepath = this._settings.baseNameMatch ? entry.name : entry.path;
+        return this._isMatchToPatterns(filepath, positiveRe) && !this._isMatchToPatterns(entry.path, negativeRe);
+    }
+    _isDuplicateEntry(entry) {
+        return this.index.has(entry.path);
+    }
+    _createIndexRecord(entry) {
+        this.index.set(entry.path, undefined);
+    }
+    _onlyFileFilter(entry) {
+        return this._settings.onlyFiles && !entry.dirent.isFile();
+    }
+    _onlyDirectoryFilter(entry) {
+        return this._settings.onlyDirectories && !entry.dirent.isDirectory();
+    }
+    _isSkippedByAbsoluteNegativePatterns(entry, negativeRe) {
+        if (!this._settings.absolute) {
+            return false;
+        }
+        const fullpath = utils.path.makeAbsolute(this._settings.cwd, entry.path);
+        return this._isMatchToPatterns(fullpath, negativeRe);
+    }
+    _isMatchToPatterns(entryPath, patternsRe) {
+        const filepath = utils.path.removeLeadingDotSegment(entryPath);
+        return utils.pattern.matchAny(filepath, patternsRe);
+    }
+}
+exports.default = EntryFilter;
 
-    value = replaceAll(value, './', '/');
-    value = replaceAll(value, '..', '.');
-    value = replaceAll(value, ' ', '-');
-    value = replaceAll(value, /^[~^:?*\\\-]/g, '');
-    value = replaceAll(value, /[~^:?*\\]/g, '-');
-    value = replaceAll(value, /[~^:?*\\\-]$/g, '');
-    value = replaceAll(value, '@{', '-');
-    value = replaceAll(value, /\.$/g, '');
-    value = replaceAll(value, /\/$/g, '');
-    value = replaceAll(value, /\.lock$/g, '');
-    return value;
-  }
-};
-
-module.exports = CleanGitRef;
 
 /***/ }),
 /* 704 */,
@@ -44014,7 +43798,72 @@ module.exports = _ls;
 /* 714 */,
 /* 715 */,
 /* 716 */,
-/* 717 */,
+/* 717 */
+/***/ (function(__unusedmodule, exports, __webpack_require__) {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", { value: true });
+const fsScandir = __webpack_require__(661);
+const common = __webpack_require__(617);
+const reader_1 = __webpack_require__(962);
+class SyncReader extends reader_1.default {
+    constructor() {
+        super(...arguments);
+        this._scandir = fsScandir.scandirSync;
+        this._storage = new Set();
+        this._queue = new Set();
+    }
+    read() {
+        this._pushToQueue(this._root, this._settings.basePath);
+        this._handleQueue();
+        return [...this._storage];
+    }
+    _pushToQueue(directory, base) {
+        this._queue.add({ directory, base });
+    }
+    _handleQueue() {
+        for (const item of this._queue.values()) {
+            this._handleDirectory(item.directory, item.base);
+        }
+    }
+    _handleDirectory(directory, base) {
+        try {
+            const entries = this._scandir(directory, this._settings.fsScandirSettings);
+            for (const entry of entries) {
+                this._handleEntry(entry, base);
+            }
+        }
+        catch (error) {
+            this._handleError(error);
+        }
+    }
+    _handleError(error) {
+        if (!common.isFatalError(this._settings, error)) {
+            return;
+        }
+        throw error;
+    }
+    _handleEntry(entry, base) {
+        const fullpath = entry.path;
+        if (base !== undefined) {
+            entry.path = common.joinPathSegments(base, entry.name, this._settings.pathSegmentSeparator);
+        }
+        if (common.isAppliedFilter(this._settings.entryFilter, entry)) {
+            this._pushToStorage(entry);
+        }
+        if (entry.dirent.isDirectory() && common.isAppliedFilter(this._settings.deepFilter, entry)) {
+            this._pushToQueue(fullpath, entry.path);
+        }
+    }
+    _pushToStorage(entry) {
+        this._storage.add(entry);
+    }
+}
+exports.default = SyncReader;
+
+
+/***/ }),
 /* 718 */,
 /* 719 */,
 /* 720 */,
@@ -44118,8 +43967,8 @@ module.exports = _test;
 
 Object.defineProperty(exports, "__esModule", { value: true });
 const path = __webpack_require__(622);
-const globParent = __webpack_require__(230);
-const micromatch = __webpack_require__(74);
+const globParent = __webpack_require__(609);
+const micromatch = __webpack_require__(430);
 const picomatch = __webpack_require__(827);
 const GLOBSTAR = '**';
 const ESCAPE_SYMBOL = '\\';
@@ -44560,38 +44409,38 @@ function create(size) {
 //
 
 function __ncc_wildcard$0 (arg) {
-  if (arg === "cat.js") return __webpack_require__(833);
-  else if (arg === "cd.js") return __webpack_require__(8);
-  else if (arg === "chmod.js") return __webpack_require__(477);
-  else if (arg === "common.js") return __webpack_require__(602);
-  else if (arg === "cp.js") return __webpack_require__(167);
-  else if (arg === "dirs.js") return __webpack_require__(542);
-  else if (arg === "echo.js") return __webpack_require__(757);
-  else if (arg === "error.js") return __webpack_require__(901);
-  else if (arg === "exec-child.js") return __webpack_require__(379);
-  else if (arg === "exec.js") return __webpack_require__(693);
-  else if (arg === "find.js") return __webpack_require__(659);
-  else if (arg === "grep.js") return __webpack_require__(199);
-  else if (arg === "head.js") return __webpack_require__(580);
-  else if (arg === "ln.js") return __webpack_require__(535);
-  else if (arg === "ls.js") return __webpack_require__(705);
-  else if (arg === "mkdir.js") return __webpack_require__(661);
-  else if (arg === "mv.js") return __webpack_require__(809);
-  else if (arg === "popd.js") return __webpack_require__(409);
-  else if (arg === "pushd.js") return __webpack_require__(188);
-  else if (arg === "pwd.js") return __webpack_require__(359);
-  else if (arg === "rm.js") return __webpack_require__(272);
-  else if (arg === "sed.js") return __webpack_require__(989);
-  else if (arg === "set.js") return __webpack_require__(936);
-  else if (arg === "sort.js") return __webpack_require__(340);
-  else if (arg === "tail.js") return __webpack_require__(62);
-  else if (arg === "tempdir.js") return __webpack_require__(388);
-  else if (arg === "test.js") return __webpack_require__(722);
-  else if (arg === "to.js") return __webpack_require__(380);
-  else if (arg === "toEnd.js") return __webpack_require__(774);
-  else if (arg === "touch.js") return __webpack_require__(505);
-  else if (arg === "uniq.js") return __webpack_require__(554);
-  else if (arg === "which.js") return __webpack_require__(98);
+  if (arg === "cat.js" || arg === "cat") return __webpack_require__(771);
+  else if (arg === "cd.js" || arg === "cd") return __webpack_require__(8);
+  else if (arg === "chmod.js" || arg === "chmod") return __webpack_require__(477);
+  else if (arg === "common.js" || arg === "common") return __webpack_require__(602);
+  else if (arg === "cp.js" || arg === "cp") return __webpack_require__(167);
+  else if (arg === "dirs.js" || arg === "dirs") return __webpack_require__(504);
+  else if (arg === "echo.js" || arg === "echo") return __webpack_require__(757);
+  else if (arg === "error.js" || arg === "error") return __webpack_require__(901);
+  else if (arg === "exec-child.js" || arg === "exec-child") return __webpack_require__(379);
+  else if (arg === "exec.js" || arg === "exec") return __webpack_require__(693);
+  else if (arg === "find.js" || arg === "find") return __webpack_require__(659);
+  else if (arg === "grep.js" || arg === "grep") return __webpack_require__(695);
+  else if (arg === "head.js" || arg === "head") return __webpack_require__(580);
+  else if (arg === "ln.js" || arg === "ln") return __webpack_require__(535);
+  else if (arg === "ls.js" || arg === "ls") return __webpack_require__(705);
+  else if (arg === "mkdir.js" || arg === "mkdir") return __webpack_require__(762);
+  else if (arg === "mv.js" || arg === "mv") return __webpack_require__(809);
+  else if (arg === "popd.js" || arg === "popd") return __webpack_require__(409);
+  else if (arg === "pushd.js" || arg === "pushd") return __webpack_require__(188);
+  else if (arg === "pwd.js" || arg === "pwd") return __webpack_require__(359);
+  else if (arg === "rm.js" || arg === "rm") return __webpack_require__(272);
+  else if (arg === "sed.js" || arg === "sed") return __webpack_require__(989);
+  else if (arg === "set.js" || arg === "set") return __webpack_require__(936);
+  else if (arg === "sort.js" || arg === "sort") return __webpack_require__(340);
+  else if (arg === "tail.js" || arg === "tail") return __webpack_require__(62);
+  else if (arg === "tempdir.js" || arg === "tempdir") return __webpack_require__(388);
+  else if (arg === "test.js" || arg === "test") return __webpack_require__(722);
+  else if (arg === "to.js" || arg === "to") return __webpack_require__(380);
+  else if (arg === "toEnd.js" || arg === "toEnd") return __webpack_require__(217);
+  else if (arg === "touch.js" || arg === "touch") return __webpack_require__(505);
+  else if (arg === "uniq.js" || arg === "uniq") return __webpack_require__(554);
+  else if (arg === "which.js" || arg === "which") return __webpack_require__(98);
 }
 var common = __webpack_require__(602);
 
@@ -44978,7 +44827,283 @@ module.exports = require("fs");
 /***/ }),
 /* 748 */,
 /* 749 */,
-/* 750 */,
+/* 750 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+// Copyright (c) 2006, 2008 Tony Garnock-Jones <tonyg@lshift.net>
+// Copyright (c) 2006, 2008 LShift Ltd. <query@lshift.net>
+//
+// Permission is hereby granted, free of charge, to any person
+// obtaining a copy of this software and associated documentation files
+// (the "Software"), to deal in the Software without restriction,
+// including without limitation the rights to use, copy, modify, merge,
+// publish, distribute, sublicense, and/or sell copies of the Software,
+// and to permit persons to whom the Software is furnished to do so,
+// subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be
+// included in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+// BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+// ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+var onp = __webpack_require__(290);
+
+function longestCommonSubsequence(file1, file2) {
+  var diff = new onp(file1, file2);
+  diff.compose();
+  var ses = diff.getses();
+
+  var root;
+  var prev;
+  var file1RevIdx = file1.length - 1,
+      file2RevIdx = file2.length - 1;
+  for (var i = ses.length - 1; i >= 0; --i) {
+      if (ses[i].t === diff.SES_COMMON) {
+        if (prev) {
+          prev.chain = {
+            file1index: file1RevIdx,
+            file2index: file2RevIdx,
+            chain: null
+          };
+          prev = prev.chain;
+        } else {
+          root = {
+            file1index: file1RevIdx,
+            file2index: file2RevIdx,
+            chain: null
+          };
+          prev = root;
+        }
+        file1RevIdx--;
+        file2RevIdx--;
+      } else if (ses[i].t === diff.SES_DELETE) {
+        file1RevIdx--;
+      } else if (ses[i].t === diff.SES_ADD) {
+        file2RevIdx--;
+      }
+  }
+
+  var tail = {
+    file1index: -1,
+    file2index: -1,
+    chain: null
+  };
+
+  if (!prev) {
+    return tail;
+  }
+
+  prev.chain = tail;
+
+  return root;
+}
+
+function diffIndices(file1, file2) {
+  // We apply the LCS to give a simple representation of the
+  // offsets and lengths of mismatched chunks in the input
+  // files. This is used by diff3_merge_indices below.
+
+  var result = [];
+  var tail1 = file1.length;
+  var tail2 = file2.length;
+
+  for (var candidate = longestCommonSubsequence(file1, file2); candidate !== null; candidate = candidate.chain) {
+    var mismatchLength1 = tail1 - candidate.file1index - 1;
+    var mismatchLength2 = tail2 - candidate.file2index - 1;
+    tail1 = candidate.file1index;
+    tail2 = candidate.file2index;
+
+    if (mismatchLength1 || mismatchLength2) {
+      result.push({
+        file1: [tail1 + 1, mismatchLength1],
+        file2: [tail2 + 1, mismatchLength2]
+      });
+    }
+  }
+
+  result.reverse();
+  return result;
+}
+
+function diff3MergeIndices(a, o, b) {
+  // Given three files, A, O, and B, where both A and B are
+  // independently derived from O, returns a fairly complicated
+  // internal representation of merge decisions it's taken. The
+  // interested reader may wish to consult
+  //
+  // Sanjeev Khanna, Keshav Kunal, and Benjamin C. Pierce. "A
+  // Formal Investigation of Diff3." In Arvind and Prasad,
+  // editors, Foundations of Software Technology and Theoretical
+  // Computer Science (FSTTCS), December 2007.
+  //
+  // (http://www.cis.upenn.edu/~bcpierce/papers/diff3-short.pdf)
+  var i;
+
+  var m1 = diffIndices(o, a);
+  var m2 = diffIndices(o, b);
+
+  var hunks = [];
+
+  function addHunk(h, side) {
+    hunks.push([h.file1[0], side, h.file1[1], h.file2[0], h.file2[1]]);
+  }
+  for (i = 0; i < m1.length; i++) {
+    addHunk(m1[i], 0);
+  }
+  for (i = 0; i < m2.length; i++) {
+    addHunk(m2[i], 2);
+  }
+  hunks.sort(function(x, y) {
+    return x[0] - y[0]
+  });
+
+  var result = [];
+  var commonOffset = 0;
+
+  function copyCommon(targetOffset) {
+    if (targetOffset > commonOffset) {
+      result.push([1, commonOffset, targetOffset - commonOffset]);
+      commonOffset = targetOffset;
+    }
+  }
+
+  for (var hunkIndex = 0; hunkIndex < hunks.length; hunkIndex++) {
+    var firstHunkIndex = hunkIndex;
+    var hunk = hunks[hunkIndex];
+    var regionLhs = hunk[0];
+    var regionRhs = regionLhs + hunk[2];
+    while (hunkIndex < hunks.length - 1) {
+      var maybeOverlapping = hunks[hunkIndex + 1];
+      var maybeLhs = maybeOverlapping[0];
+      if (maybeLhs > regionRhs) break;
+      regionRhs = Math.max(regionRhs, maybeLhs + maybeOverlapping[2]);
+      hunkIndex++;
+    }
+
+    copyCommon(regionLhs);
+    if (firstHunkIndex == hunkIndex) {
+      // The "overlap" was only one hunk long, meaning that
+      // there's no conflict here. Either a and o were the
+      // same, or b and o were the same.
+      if (hunk[4] > 0) {
+        result.push([hunk[1], hunk[3], hunk[4]]);
+      }
+    } else {
+      // A proper conflict. Determine the extents of the
+      // regions involved from a, o and b. Effectively merge
+      // all the hunks on the left into one giant hunk, and
+      // do the same for the right; then, correct for skew
+      // in the regions of o that each side changed, and
+      // report appropriate spans for the three sides.
+      var regions = {
+        0: [a.length, -1, o.length, -1],
+        2: [b.length, -1, o.length, -1]
+      };
+      for (i = firstHunkIndex; i <= hunkIndex; i++) {
+        hunk = hunks[i];
+        var side = hunk[1];
+        var r = regions[side];
+        var oLhs = hunk[0];
+        var oRhs = oLhs + hunk[2];
+        var abLhs = hunk[3];
+        var abRhs = abLhs + hunk[4];
+        r[0] = Math.min(abLhs, r[0]);
+        r[1] = Math.max(abRhs, r[1]);
+        r[2] = Math.min(oLhs, r[2]);
+        r[3] = Math.max(oRhs, r[3]);
+      }
+      var aLhs = regions[0][0] + (regionLhs - regions[0][2]);
+      var aRhs = regions[0][1] + (regionRhs - regions[0][3]);
+      var bLhs = regions[2][0] + (regionLhs - regions[2][2]);
+      var bRhs = regions[2][1] + (regionRhs - regions[2][3]);
+      result.push([-1,
+        aLhs, aRhs - aLhs,
+        regionLhs, regionRhs - regionLhs,
+        bLhs, bRhs - bLhs
+      ]);
+    }
+    commonOffset = regionRhs;
+  }
+
+  copyCommon(o.length);
+  return result;
+}
+
+function diff3Merge(a, o, b) {
+  // Applies the output of Diff.diff3_merge_indices to actually
+  // construct the merged file; the returned result alternates
+  // between "ok" and "conflict" blocks.
+
+  var result = [];
+  var files = [a, o, b];
+  var indices = diff3MergeIndices(a, o, b);
+
+  var okLines = [];
+
+  function flushOk() {
+    if (okLines.length) {
+      result.push({
+        ok: okLines
+      });
+    }
+    okLines = [];
+  }
+
+  function pushOk(xs) {
+    for (var j = 0; j < xs.length; j++) {
+      okLines.push(xs[j]);
+    }
+  }
+
+  function isTrueConflict(rec) {
+    if (rec[2] != rec[6]) return true;
+    var aoff = rec[1];
+    var boff = rec[5];
+    for (var j = 0; j < rec[2]; j++) {
+      if (a[j + aoff] != b[j + boff]) return true;
+    }
+    return false;
+  }
+
+  for (var i = 0; i < indices.length; i++) {
+    var x = indices[i];
+    var side = x[0];
+    if (side == -1) {
+      if (!isTrueConflict(x)) {
+        pushOk(files[0].slice(x[1], x[1] + x[2]));
+      } else {
+        flushOk();
+        result.push({
+          conflict: {
+            a: a.slice(x[1], x[1] + x[2]),
+            aIndex: x[1],
+            o: o.slice(x[3], x[3] + x[4]),
+            oIndex: x[3],
+            b: b.slice(x[5], x[5] + x[6]),
+            bIndex: x[5]
+          }
+        });
+      }
+    } else {
+      pushOk(files[side].slice(x[1], x[1] + x[2]));
+    }
+  }
+
+  flushOk();
+  return result;
+}
+
+module.exports = diff3Merge;
+
+
+/***/ }),
 /* 751 */,
 /* 752 */,
 /* 753 */
@@ -45209,7 +45334,58 @@ module.exports = _echo;
 
 /***/ }),
 /* 758 */,
-/* 759 */,
+/* 759 */
+/***/ (function(module) {
+
+"use strict";
+
+
+// See http://www.robvanderwoude.com/escapechars.php
+const metaCharsRegExp = /([()\][%!^"`<>&|;, *?])/g;
+
+function escapeCommand(arg) {
+    // Escape meta chars
+    arg = arg.replace(metaCharsRegExp, '^$1');
+
+    return arg;
+}
+
+function escapeArgument(arg, doubleEscapeMetaChars) {
+    // Convert to string
+    arg = `${arg}`;
+
+    // Algorithm below is based on https://qntm.org/cmd
+
+    // Sequence of backslashes followed by a double quote:
+    // double up all the backslashes and escape the double quote
+    arg = arg.replace(/(\\*)"/g, '$1$1\\"');
+
+    // Sequence of backslashes followed by the end of the string
+    // (which will become a double quote later):
+    // double up all the backslashes
+    arg = arg.replace(/(\\*)$/, '$1$1');
+
+    // All other backslashes occur literally
+
+    // Quote the whole thing:
+    arg = `"${arg}"`;
+
+    // Escape meta chars
+    arg = arg.replace(metaCharsRegExp, '^$1');
+
+    // Double escape meta chars if necessary
+    if (doubleEscapeMetaChars) {
+        arg = arg.replace(metaCharsRegExp, '^$1');
+    }
+
+    return arg;
+}
+
+module.exports.command = escapeCommand;
+module.exports.argument = escapeArgument;
+
+
+/***/ }),
 /* 760 */,
 /* 761 */
 /***/ (function(module) {
@@ -45217,30 +45393,113 @@ module.exports = _echo;
 module.exports = require("zlib");
 
 /***/ }),
-/* 762 */,
-/* 763 */
-/***/ (function(module) {
+/* 762 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
 
-module.exports = removeHook
+var common = __webpack_require__(602);
+var fs = __webpack_require__(747);
+var path = __webpack_require__(622);
 
-function removeHook (state, name, method) {
-  if (!state.registry[name]) {
-    return
+common.register('mkdir', _mkdir, {
+  cmdOptions: {
+    'p': 'fullpath',
+  },
+});
+
+// Recursively creates `dir`
+function mkdirSyncRecursive(dir) {
+  var baseDir = path.dirname(dir);
+
+  // Prevents some potential problems arising from malformed UNCs or
+  // insufficient permissions.
+  /* istanbul ignore next */
+  if (baseDir === dir) {
+    common.error('dirname() failed: [' + dir + ']');
   }
 
-  var index = state.registry[name]
-    .map(function (registered) { return registered.orig })
-    .indexOf(method)
-
-  if (index === -1) {
-    return
+  // Base dir exists, no recursion necessary
+  if (fs.existsSync(baseDir)) {
+    fs.mkdirSync(dir, parseInt('0777', 8));
+    return;
   }
 
-  state.registry[name].splice(index, 1)
+  // Base dir does not exist, go recursive
+  mkdirSyncRecursive(baseDir);
+
+  // Base dir created, can create dir
+  fs.mkdirSync(dir, parseInt('0777', 8));
 }
+
+//@
+//@ ### mkdir([options,] dir [, dir ...])
+//@ ### mkdir([options,] dir_array)
+//@
+//@ Available options:
+//@
+//@ + `-p`: full path (and create intermediate directories, if necessary)
+//@
+//@ Examples:
+//@
+//@ ```javascript
+//@ mkdir('-p', '/tmp/a/b/c/d', '/tmp/e/f/g');
+//@ mkdir('-p', ['/tmp/a/b/c/d', '/tmp/e/f/g']); // same as above
+//@ ```
+//@
+//@ Creates directories.
+function _mkdir(options, dirs) {
+  if (!dirs) common.error('no paths given');
+
+  if (typeof dirs === 'string') {
+    dirs = [].slice.call(arguments, 1);
+  }
+  // if it's array leave it as it is
+
+  dirs.forEach(function (dir) {
+    try {
+      var stat = common.statNoFollowLinks(dir);
+      if (!options.fullpath) {
+        common.error('path already exists: ' + dir, { continue: true });
+      } else if (stat.isFile()) {
+        common.error('cannot create directory ' + dir + ': File exists', { continue: true });
+      }
+      return; // skip dir
+    } catch (e) {
+      // do nothing
+    }
+
+    // Base dir does not exist, and no -p option given
+    var baseDir = path.dirname(dir);
+    if (!fs.existsSync(baseDir) && !options.fullpath) {
+      common.error('no such file or directory: ' + baseDir, { continue: true });
+      return; // skip dir
+    }
+
+    try {
+      if (options.fullpath) {
+        mkdirSyncRecursive(path.resolve(dir));
+      } else {
+        fs.mkdirSync(dir, parseInt('0777', 8));
+      }
+    } catch (e) {
+      var reason;
+      if (e.code === 'EACCES') {
+        reason = 'Permission denied';
+      } else if (e.code === 'ENOTDIR' || e.code === 'ENOENT') {
+        reason = 'Not a directory';
+      } else {
+        /* istanbul ignore next */
+        throw e;
+      }
+      common.error('cannot create directory ' + dir + ': ' + reason, { continue: true });
+    }
+  });
+  return '';
+} // mkdir
+module.exports = _mkdir;
 
 
 /***/ }),
+/* 763 */,
 /* 764 */,
 /* 765 */,
 /* 766 */,
@@ -45267,7 +45526,139 @@ module.exports = function (x) {
 
 
 /***/ }),
-/* 769 */
+/* 769 */,
+/* 770 */,
+/* 771 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+var common = __webpack_require__(602);
+var fs = __webpack_require__(747);
+
+common.register('cat', _cat, {
+  canReceivePipe: true,
+  cmdOptions: {
+    'n': 'number',
+  },
+});
+
+//@
+//@ ### cat([options,] file [, file ...])
+//@ ### cat([options,] file_array)
+//@
+//@ Available options:
+//@
+//@ + `-n`: number all output lines
+//@
+//@ Examples:
+//@
+//@ ```javascript
+//@ var str = cat('file*.txt');
+//@ var str = cat('file1', 'file2');
+//@ var str = cat(['file1', 'file2']); // same as above
+//@ ```
+//@
+//@ Returns a string containing the given file, or a concatenated string
+//@ containing the files if more than one file is given (a new line character is
+//@ introduced between each file).
+function _cat(options, files) {
+  var cat = common.readFromPipe();
+
+  if (!files && !cat) common.error('no paths given');
+
+  files = [].slice.call(arguments, 1);
+
+  files.forEach(function (file) {
+    if (!fs.existsSync(file)) {
+      common.error('no such file or directory: ' + file);
+    } else if (common.statFollowLinks(file).isDirectory()) {
+      common.error(file + ': Is a directory');
+    }
+
+    cat += fs.readFileSync(file, 'utf8');
+  });
+
+  if (options.number) {
+    cat = addNumbers(cat);
+  }
+
+  return cat;
+}
+module.exports = _cat;
+
+function addNumbers(cat) {
+  var lines = cat.split('\n');
+  var lastLine = lines.pop();
+
+  lines = lines.map(function (line, i) {
+    return numberedLine(i + 1, line);
+  });
+
+  if (lastLine.length) {
+    lastLine = numberedLine(lines.length + 1, lastLine);
+  }
+  lines.push(lastLine);
+
+  return lines.join('\n');
+}
+
+function numberedLine(n, line) {
+  // GNU cat use six pad start number + tab. See http://lingrok.org/xref/coreutils/src/cat.c#57
+  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/padStart
+  var number = ('     ' + n).slice(-6) + '\t';
+  return number + line;
+}
+
+
+/***/ }),
+/* 772 */,
+/* 773 */,
+/* 774 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+
+const cp = __webpack_require__(129);
+const parse = __webpack_require__(884);
+const enoent = __webpack_require__(15);
+
+function spawn(command, args, options) {
+    // Parse the arguments
+    const parsed = parse(command, args, options);
+
+    // Spawn the child process
+    const spawned = cp.spawn(parsed.command, parsed.args, parsed.options);
+
+    // Hook into child process "exit" event to emit an error if the command
+    // does not exists, see: https://github.com/IndigoUnited/node-cross-spawn/issues/16
+    enoent.hookChildProcess(spawned, parsed);
+
+    return spawned;
+}
+
+function spawnSync(command, args, options) {
+    // Parse the arguments
+    const parsed = parse(command, args, options);
+
+    // Spawn the child process
+    const result = cp.spawnSync(parsed.command, parsed.args, parsed.options);
+
+    // Analyze if the command does not exist, see: https://github.com/IndigoUnited/node-cross-spawn/issues/16
+    result.error = result.error || enoent.verifyENOENTSync(result.status, parsed);
+
+    return result;
+}
+
+module.exports = spawn;
+module.exports.spawn = spawn;
+module.exports.sync = spawnSync;
+
+module.exports._parse = parse;
+module.exports._enoent = enoent;
+
+
+/***/ }),
+/* 775 */
 /***/ (function(__unusedmodule, exports, __webpack_require__) {
 
 "use strict";
@@ -45302,71 +45693,6 @@ class ProviderStream extends provider_1.default {
     }
 }
 exports.default = ProviderStream;
-
-
-/***/ }),
-/* 770 */,
-/* 771 */,
-/* 772 */,
-/* 773 */,
-/* 774 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-var common = __webpack_require__(602);
-var fs = __webpack_require__(747);
-var path = __webpack_require__(622);
-
-common.register('toEnd', _toEnd, {
-  pipeOnly: true,
-  wrapOutput: false,
-});
-
-//@
-//@ ### ShellString.prototype.toEnd(file)
-//@
-//@ Examples:
-//@
-//@ ```javascript
-//@ cat('input.txt').toEnd('output.txt');
-//@ ```
-//@
-//@ Analogous to the redirect-and-append operator `>>` in Unix, but works with
-//@ `ShellStrings` (such as those returned by `cat`, `grep`, etc.).
-function _toEnd(options, file) {
-  if (!file) common.error('wrong arguments');
-
-  if (!fs.existsSync(path.dirname(file))) {
-    common.error('no such file or directory: ' + path.dirname(file));
-  }
-
-  try {
-    fs.appendFileSync(file, this.stdout || this.toString(), 'utf8');
-    return this;
-  } catch (e) {
-    /* istanbul ignore next */
-    common.error('could not append to file (code ' + e.code + '): ' + file, { continue: true });
-  }
-}
-module.exports = _toEnd;
-
-
-/***/ }),
-/* 775 */
-/***/ (function(module) {
-
-module.exports = function (xs, fn) {
-    var res = [];
-    for (var i = 0; i < xs.length; i++) {
-        var x = fn(xs[i], i);
-        if (isArray(x)) res.push.apply(res, x);
-        else res.push(x);
-    }
-    return res;
-};
-
-var isArray = Array.isArray || function (xs) {
-    return Object.prototype.toString.call(xs) === '[object Array]';
-};
 
 
 /***/ }),
@@ -45938,68 +46264,7 @@ function authenticate(state, options) {
 /***/ }),
 /* 791 */,
 /* 792 */,
-/* 793 */
-/***/ (function(__unusedmodule, exports, __webpack_require__) {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", { value: true });
-const utils = __webpack_require__(444);
-class EntryFilter {
-    constructor(_settings, _micromatchOptions) {
-        this._settings = _settings;
-        this._micromatchOptions = _micromatchOptions;
-        this.index = new Map();
-    }
-    getFilter(positive, negative) {
-        const positiveRe = utils.pattern.convertPatternsToRe(positive, this._micromatchOptions);
-        const negativeRe = utils.pattern.convertPatternsToRe(negative, this._micromatchOptions);
-        return (entry) => this._filter(entry, positiveRe, negativeRe);
-    }
-    _filter(entry, positiveRe, negativeRe) {
-        if (this._settings.unique) {
-            if (this._isDuplicateEntry(entry)) {
-                return false;
-            }
-            this._createIndexRecord(entry);
-        }
-        if (this._onlyFileFilter(entry) || this._onlyDirectoryFilter(entry)) {
-            return false;
-        }
-        if (this._isSkippedByAbsoluteNegativePatterns(entry, negativeRe)) {
-            return false;
-        }
-        const filepath = this._settings.baseNameMatch ? entry.name : entry.path;
-        return this._isMatchToPatterns(filepath, positiveRe) && !this._isMatchToPatterns(entry.path, negativeRe);
-    }
-    _isDuplicateEntry(entry) {
-        return this.index.has(entry.path);
-    }
-    _createIndexRecord(entry) {
-        this.index.set(entry.path, undefined);
-    }
-    _onlyFileFilter(entry) {
-        return this._settings.onlyFiles && !entry.dirent.isFile();
-    }
-    _onlyDirectoryFilter(entry) {
-        return this._settings.onlyDirectories && !entry.dirent.isDirectory();
-    }
-    _isSkippedByAbsoluteNegativePatterns(entry, negativeRe) {
-        if (!this._settings.absolute) {
-            return false;
-        }
-        const fullpath = utils.path.makeAbsolute(this._settings.cwd, entry.path);
-        return this._isMatchToPatterns(fullpath, negativeRe);
-    }
-    _isMatchToPatterns(entryPath, patternsRe) {
-        const filepath = utils.path.removeLeadingDotSegment(entryPath);
-        return utils.pattern.matchAny(filepath, patternsRe);
-    }
-}
-exports.default = EntryFilter;
-
-
-/***/ }),
+/* 793 */,
 /* 794 */,
 /* 795 */,
 /* 796 */
@@ -46197,7 +46462,7 @@ CRC32.str = crc32_str;
 "use strict";
 
 
-const constants = __webpack_require__(530);
+const constants = __webpack_require__(199);
 const utils = __webpack_require__(224);
 
 /**
@@ -47744,186 +48009,7 @@ module.exports = __webpack_require__(366);
 /***/ }),
 /* 828 */,
 /* 829 */,
-/* 830 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-"use strict";
-
-
-var reusify = __webpack_require__(440)
-
-function fastqueue (context, worker, concurrency) {
-  if (typeof context === 'function') {
-    concurrency = worker
-    worker = context
-    context = null
-  }
-
-  var cache = reusify(Task)
-  var queueHead = null
-  var queueTail = null
-  var _running = 0
-
-  var self = {
-    push: push,
-    drain: noop,
-    saturated: noop,
-    pause: pause,
-    paused: false,
-    concurrency: concurrency,
-    running: running,
-    resume: resume,
-    idle: idle,
-    length: length,
-    unshift: unshift,
-    empty: noop,
-    kill: kill,
-    killAndDrain: killAndDrain
-  }
-
-  return self
-
-  function running () {
-    return _running
-  }
-
-  function pause () {
-    self.paused = true
-  }
-
-  function length () {
-    var current = queueHead
-    var counter = 0
-
-    while (current) {
-      current = current.next
-      counter++
-    }
-
-    return counter
-  }
-
-  function resume () {
-    if (!self.paused) return
-    self.paused = false
-    for (var i = 0; i < self.concurrency; i++) {
-      _running++
-      release()
-    }
-  }
-
-  function idle () {
-    return _running === 0 && self.length() === 0
-  }
-
-  function push (value, done) {
-    var current = cache.get()
-
-    current.context = context
-    current.release = release
-    current.value = value
-    current.callback = done || noop
-
-    if (_running === self.concurrency || self.paused) {
-      if (queueTail) {
-        queueTail.next = current
-        queueTail = current
-      } else {
-        queueHead = current
-        queueTail = current
-        self.saturated()
-      }
-    } else {
-      _running++
-      worker.call(context, current.value, current.worked)
-    }
-  }
-
-  function unshift (value, done) {
-    var current = cache.get()
-
-    current.context = context
-    current.release = release
-    current.value = value
-    current.callback = done || noop
-
-    if (_running === self.concurrency || self.paused) {
-      if (queueHead) {
-        current.next = queueHead
-        queueHead = current
-      } else {
-        queueHead = current
-        queueTail = current
-        self.saturated()
-      }
-    } else {
-      _running++
-      worker.call(context, current.value, current.worked)
-    }
-  }
-
-  function release (holder) {
-    if (holder) {
-      cache.release(holder)
-    }
-    var next = queueHead
-    if (next) {
-      if (!self.paused) {
-        if (queueTail === queueHead) {
-          queueTail = null
-        }
-        queueHead = next.next
-        next.next = null
-        worker.call(context, next.value, next.worked)
-        if (queueTail === null) {
-          self.empty()
-        }
-      } else {
-        _running--
-      }
-    } else if (--_running === 0) {
-      self.drain()
-    }
-  }
-
-  function kill () {
-    queueHead = null
-    queueTail = null
-    self.drain = noop
-  }
-
-  function killAndDrain () {
-    queueHead = null
-    queueTail = null
-    self.drain()
-    self.drain = noop
-  }
-}
-
-function noop () {}
-
-function Task () {
-  this.value = null
-  this.callback = noop
-  this.next = null
-  this.release = noop
-  this.context = null
-
-  var self = this
-
-  this.worked = function worked (err, result) {
-    var callback = self.callback
-    self.value = null
-    self.callback = noop
-    callback.call(self.context, err, result)
-    self.release(self)
-  }
-}
-
-module.exports = fastqueue
-
-
-/***/ }),
+/* 830 */,
 /* 831 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
@@ -47973,7 +48059,7 @@ var Readable = __webpack_require__(226);
 
 var Writable = __webpack_require__(241);
 
-__webpack_require__(689)(Duplex, Readable);
+__webpack_require__(938)(Duplex, Readable);
 
 {
   // Allow the keys array to be GC'ed.
@@ -48500,84 +48586,23 @@ exports.ungzip  = inflate;
 
 /***/ }),
 /* 833 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
+/***/ (function(__unusedmodule, exports, __webpack_require__) {
 
-var common = __webpack_require__(602);
-var fs = __webpack_require__(747);
+"use strict";
 
-common.register('cat', _cat, {
-  canReceivePipe: true,
-  cmdOptions: {
-    'n': 'number',
-  },
-});
-
-//@
-//@ ### cat([options,] file [, file ...])
-//@ ### cat([options,] file_array)
-//@
-//@ Available options:
-//@
-//@ + `-n`: number all output lines
-//@
-//@ Examples:
-//@
-//@ ```javascript
-//@ var str = cat('file*.txt');
-//@ var str = cat('file1', 'file2');
-//@ var str = cat(['file1', 'file2']); // same as above
-//@ ```
-//@
-//@ Returns a string containing the given file, or a concatenated string
-//@ containing the files if more than one file is given (a new line character is
-//@ introduced between each file).
-function _cat(options, files) {
-  var cat = common.readFromPipe();
-
-  if (!files && !cat) common.error('no paths given');
-
-  files = [].slice.call(arguments, 1);
-
-  files.forEach(function (file) {
-    if (!fs.existsSync(file)) {
-      common.error('no such file or directory: ' + file);
-    } else if (common.statFollowLinks(file).isDirectory()) {
-      common.error(file + ': Is a directory');
+Object.defineProperty(exports, "__esModule", { value: true });
+const sync_1 = __webpack_require__(717);
+class SyncProvider {
+    constructor(_root, _settings) {
+        this._root = _root;
+        this._settings = _settings;
+        this._reader = new sync_1.default(this._root, this._settings);
     }
-
-    cat += fs.readFileSync(file, 'utf8');
-  });
-
-  if (options.number) {
-    cat = addNumbers(cat);
-  }
-
-  return cat;
+    read() {
+        return this._reader.read();
+    }
 }
-module.exports = _cat;
-
-function addNumbers(cat) {
-  var lines = cat.split('\n');
-  var lastLine = lines.pop();
-
-  lines = lines.map(function (line, i) {
-    return numberedLine(i + 1, line);
-  });
-
-  if (lastLine.length) {
-    lastLine = numberedLine(lines.length + 1, lastLine);
-  }
-  lines.push(lastLine);
-
-  return lines.join('\n');
-}
-
-function numberedLine(n, line) {
-  // GNU cat use six pad start number + tab. See http://lingrok.org/xref/coreutils/src/cat.c#57
-  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/padStart
-  var number = ('     ' + n).slice(-6) + '\t';
-  return number + line;
-}
+exports.default = SyncProvider;
 
 
 /***/ }),
@@ -49776,66 +49801,23 @@ exports.createFileSystemAdapter = createFileSystemAdapter;
 /* 881 */
 /***/ (function(module) {
 
-"use strict";
+module.exports = removeHook
 
+function removeHook (state, name, method) {
+  if (!state.registry[name]) {
+    return
+  }
 
-const isWin = process.platform === 'win32';
+  var index = state.registry[name]
+    .map(function (registered) { return registered.orig })
+    .indexOf(method)
 
-function notFoundError(original, syscall) {
-    return Object.assign(new Error(`${syscall} ${original.command} ENOENT`), {
-        code: 'ENOENT',
-        errno: 'ENOENT',
-        syscall: `${syscall} ${original.command}`,
-        path: original.command,
-        spawnargs: original.args,
-    });
+  if (index === -1) {
+    return
+  }
+
+  state.registry[name].splice(index, 1)
 }
-
-function hookChildProcess(cp, parsed) {
-    if (!isWin) {
-        return;
-    }
-
-    const originalEmit = cp.emit;
-
-    cp.emit = function (name, arg1) {
-        // If emitting "exit" event and exit code is 1, we need to check if
-        // the command exists and emit an "error" instead
-        // See https://github.com/IndigoUnited/node-cross-spawn/issues/16
-        if (name === 'exit') {
-            const err = verifyENOENT(arg1, parsed, 'spawn');
-
-            if (err) {
-                return originalEmit.call(cp, 'error', err);
-            }
-        }
-
-        return originalEmit.apply(cp, arguments); // eslint-disable-line prefer-rest-params
-    };
-}
-
-function verifyENOENT(status, parsed) {
-    if (isWin && status === 1 && !parsed.file) {
-        return notFoundError(parsed.original, 'spawn');
-    }
-
-    return null;
-}
-
-function verifyENOENTSync(status, parsed) {
-    if (isWin && status === 1 && !parsed.file) {
-        return notFoundError(parsed.original, 'spawnSync');
-    }
-
-    return null;
-}
-
-module.exports = {
-    hookChildProcess,
-    verifyENOENT,
-    verifyENOENTSync,
-    notFoundError,
-};
 
 
 /***/ }),
@@ -49872,7 +49854,7 @@ module.exports = PassThrough;
 
 var Transform = __webpack_require__(925);
 
-__webpack_require__(689)(PassThrough, Transform);
+__webpack_require__(938)(PassThrough, Transform);
 
 function PassThrough(options) {
   if (!(this instanceof PassThrough)) return new PassThrough(options);
@@ -50881,19 +50863,134 @@ module.exports = set;
 
 /***/ }),
 /* 884 */
-/***/ (function(__unusedmodule, exports) {
+/***/ (function(module, __unusedexports, __webpack_require__) {
 
 "use strict";
 
-Object.defineProperty(exports, "__esModule", { value: true });
-function isString(input) {
-    return typeof input === 'string';
+
+const path = __webpack_require__(622);
+const niceTry = __webpack_require__(948);
+const resolveCommand = __webpack_require__(542);
+const escape = __webpack_require__(759);
+const readShebang = __webpack_require__(306);
+const semver = __webpack_require__(280);
+
+const isWin = process.platform === 'win32';
+const isExecutableRegExp = /\.(?:com|exe)$/i;
+const isCmdShimRegExp = /node_modules[\\/].bin[\\/][^\\/]+\.cmd$/i;
+
+// `options.shell` is supported in Node ^4.8.0, ^5.7.0 and >= 6.0.0
+const supportsShellOption = niceTry(() => semver.satisfies(process.version, '^4.8.0 || ^5.7.0 || >= 6.0.0', true)) || false;
+
+function detectShebang(parsed) {
+    parsed.file = resolveCommand(parsed);
+
+    const shebang = parsed.file && readShebang(parsed.file);
+
+    if (shebang) {
+        parsed.args.unshift(parsed.file);
+        parsed.command = shebang;
+
+        return resolveCommand(parsed);
+    }
+
+    return parsed.file;
 }
-exports.isString = isString;
-function isEmpty(input) {
-    return input === '';
+
+function parseNonShell(parsed) {
+    if (!isWin) {
+        return parsed;
+    }
+
+    // Detect & add support for shebangs
+    const commandFile = detectShebang(parsed);
+
+    // We don't need a shell if the command filename is an executable
+    const needsShell = !isExecutableRegExp.test(commandFile);
+
+    // If a shell is required, use cmd.exe and take care of escaping everything correctly
+    // Note that `forceShell` is an hidden option used only in tests
+    if (parsed.options.forceShell || needsShell) {
+        // Need to double escape meta chars if the command is a cmd-shim located in `node_modules/.bin/`
+        // The cmd-shim simply calls execute the package bin file with NodeJS, proxying any argument
+        // Because the escape of metachars with ^ gets interpreted when the cmd.exe is first called,
+        // we need to double escape them
+        const needsDoubleEscapeMetaChars = isCmdShimRegExp.test(commandFile);
+
+        // Normalize posix paths into OS compatible paths (e.g.: foo/bar -> foo\bar)
+        // This is necessary otherwise it will always fail with ENOENT in those cases
+        parsed.command = path.normalize(parsed.command);
+
+        // Escape command & arguments
+        parsed.command = escape.command(parsed.command);
+        parsed.args = parsed.args.map((arg) => escape.argument(arg, needsDoubleEscapeMetaChars));
+
+        const shellCommand = [parsed.command].concat(parsed.args).join(' ');
+
+        parsed.args = ['/d', '/s', '/c', `"${shellCommand}"`];
+        parsed.command = process.env.comspec || 'cmd.exe';
+        parsed.options.windowsVerbatimArguments = true; // Tell node's spawn that the arguments are already escaped
+    }
+
+    return parsed;
 }
-exports.isEmpty = isEmpty;
+
+function parseShell(parsed) {
+    // If node supports the shell option, there's no need to mimic its behavior
+    if (supportsShellOption) {
+        return parsed;
+    }
+
+    // Mimic node shell option
+    // See https://github.com/nodejs/node/blob/b9f6a2dc059a1062776133f3d4fd848c4da7d150/lib/child_process.js#L335
+    const shellCommand = [parsed.command].concat(parsed.args).join(' ');
+
+    if (isWin) {
+        parsed.command = typeof parsed.options.shell === 'string' ? parsed.options.shell : process.env.comspec || 'cmd.exe';
+        parsed.args = ['/d', '/s', '/c', `"${shellCommand}"`];
+        parsed.options.windowsVerbatimArguments = true; // Tell node's spawn that the arguments are already escaped
+    } else {
+        if (typeof parsed.options.shell === 'string') {
+            parsed.command = parsed.options.shell;
+        } else if (process.platform === 'android') {
+            parsed.command = '/system/bin/sh';
+        } else {
+            parsed.command = '/bin/sh';
+        }
+
+        parsed.args = ['-c', shellCommand];
+    }
+
+    return parsed;
+}
+
+function parse(command, args, options) {
+    // Normalize arguments, similar to nodejs
+    if (args && !Array.isArray(args)) {
+        options = args;
+        args = null;
+    }
+
+    args = args ? args.slice(0) : []; // Clone array to avoid changing the original
+    options = Object.assign({}, options); // Clone object to avoid changing the original
+
+    // Build our parsed object
+    const parsed = {
+        command,
+        args,
+        options,
+        file: undefined,
+        original: {
+            command,
+            args,
+        },
+    };
+
+    // Delegate further parsing to shell or non-shell
+    return options.shell ? parseShell(parsed) : parseNonShell(parsed);
+}
+
+module.exports = parse;
 
 
 /***/ }),
@@ -51460,7 +51557,51 @@ module.exports = error;
 
 /***/ }),
 /* 902 */,
-/* 903 */,
+/* 903 */
+/***/ (function(module) {
+
+"use strict";
+
+
+// We define these manually to ensure they're always copied
+// even if they would move up the prototype chain
+// https://nodejs.org/api/http.html#http_class_http_incomingmessage
+const knownProperties = [
+	'aborted',
+	'complete',
+	'destroy',
+	'headers',
+	'httpVersion',
+	'httpVersionMinor',
+	'httpVersionMajor',
+	'method',
+	'rawHeaders',
+	'rawTrailers',
+	'setTimeout',
+	'socket',
+	'statusCode',
+	'statusMessage',
+	'trailers',
+	'url'
+];
+
+module.exports = (fromStream, toStream) => {
+	const fromProperties = new Set(Object.keys(fromStream).concat(knownProperties));
+
+	for (const property of fromProperties) {
+		// Don't overwrite existing properties.
+		if (property in toStream) {
+			continue;
+		}
+
+		toStream[property] = typeof fromStream[property] === 'function' ? fromStream[property].bind(fromStream) : fromStream[property];
+	}
+
+	return toStream;
+};
+
+
+/***/ }),
 /* 904 */,
 /* 905 */,
 /* 906 */,
@@ -51635,7 +51776,7 @@ var _require$codes = __webpack_require__(38).codes,
 
 var Duplex = __webpack_require__(831);
 
-__webpack_require__(689)(Transform, Duplex);
+__webpack_require__(938)(Transform, Duplex);
 
 function afterTransform(er, data) {
   var ts = this._transformState;
@@ -51862,7 +52003,21 @@ module.exports = _set;
 
 /***/ }),
 /* 937 */,
-/* 938 */,
+/* 938 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+try {
+  var util = __webpack_require__(669);
+  /* istanbul ignore next */
+  if (typeof util.inherits !== 'function') throw '';
+  module.exports = util.inherits;
+} catch (e) {
+  /* istanbul ignore next */
+  module.exports = __webpack_require__(315);
+}
+
+
+/***/ }),
 /* 939 */,
 /* 940 */,
 /* 941 */,
@@ -52041,7 +52196,7 @@ function authenticationPlugin(octokit, options) {
 
 const path = __webpack_require__(622);
 const childProcess = __webpack_require__(129);
-const crossSpawn = __webpack_require__(20);
+const crossSpawn = __webpack_require__(774);
 const stripEof = __webpack_require__(768);
 const npmRunPath = __webpack_require__(621);
 const isStream = __webpack_require__(323);
@@ -52417,10 +52572,10 @@ var Hash = _interopDefault(__webpack_require__(529));
 var crc32 = _interopDefault(__webpack_require__(800));
 var applyDelta = _interopDefault(__webpack_require__(258));
 var pako = _interopDefault(__webpack_require__(246));
-var ignore = _interopDefault(__webpack_require__(396));
+var ignore = _interopDefault(__webpack_require__(127));
 var pify = _interopDefault(__webpack_require__(567));
-var cleanGitRef = _interopDefault(__webpack_require__(703));
-var diff3Merge = _interopDefault(__webpack_require__(611));
+var cleanGitRef = _interopDefault(__webpack_require__(178));
+var diff3Merge = _interopDefault(__webpack_require__(750));
 
 /**
  * @typedef {Object} GitProgressEvent
@@ -65490,39 +65645,7 @@ function onceStrict (fn) {
 /* 970 */,
 /* 971 */,
 /* 972 */,
-/* 973 */
-/***/ (function(__unusedmodule, exports, __webpack_require__) {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", { value: true });
-const path = __webpack_require__(622);
-const fsScandir = __webpack_require__(990);
-class Settings {
-    constructor(_options = {}) {
-        this._options = _options;
-        this.basePath = this._getValue(this._options.basePath, undefined);
-        this.concurrency = this._getValue(this._options.concurrency, Infinity);
-        this.deepFilter = this._getValue(this._options.deepFilter, null);
-        this.entryFilter = this._getValue(this._options.entryFilter, null);
-        this.errorFilter = this._getValue(this._options.errorFilter, null);
-        this.pathSegmentSeparator = this._getValue(this._options.pathSegmentSeparator, path.sep);
-        this.fsScandirSettings = new fsScandir.Settings({
-            followSymbolicLinks: this._options.followSymbolicLinks,
-            fs: this._options.fs,
-            pathSegmentSeparator: this._options.pathSegmentSeparator,
-            stats: this._options.stats,
-            throwErrorOnBrokenSymbolicLink: this._options.throwErrorOnBrokenSymbolicLink
-        });
-    }
-    _getValue(option, value) {
-        return option === undefined ? value : option;
-    }
-}
-exports.default = Settings;
-
-
-/***/ }),
+/* 973 */,
 /* 974 */,
 /* 975 */,
 /* 976 */,
@@ -65663,37 +65786,7 @@ module.exports = _sed;
 
 
 /***/ }),
-/* 990 */
-/***/ (function(__unusedmodule, exports, __webpack_require__) {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", { value: true });
-const async = __webpack_require__(182);
-const sync = __webpack_require__(148);
-const settings_1 = __webpack_require__(403);
-exports.Settings = settings_1.default;
-function scandir(path, optionsOrSettingsOrCallback, callback) {
-    if (typeof optionsOrSettingsOrCallback === 'function') {
-        return async.read(path, getSettings(), optionsOrSettingsOrCallback);
-    }
-    async.read(path, getSettings(optionsOrSettingsOrCallback), callback);
-}
-exports.scandir = scandir;
-function scandirSync(path, optionsOrSettings) {
-    const settings = getSettings(optionsOrSettings);
-    return sync.read(path, settings);
-}
-exports.scandirSync = scandirSync;
-function getSettings(settingsOrOptions = {}) {
-    if (settingsOrOptions instanceof settings_1.default) {
-        return settingsOrOptions;
-    }
-    return new settings_1.default(settingsOrOptions);
-}
-
-
-/***/ }),
+/* 990 */,
 /* 991 */
 /***/ (function(module) {
 

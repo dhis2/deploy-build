@@ -1,13 +1,11 @@
-const path = require('path')
 const fs = require('fs')
-
+const path = require('path')
 const core = require('@actions/core')
 const github = require('@actions/github')
-
+const fg = require('fast-glob')
 const git = require('isomorphic-git')
 const http = require('isomorphic-git/http/node')
 const shell = require('shelljs')
-const fg = require('fast-glob')
 
 // workaround to allow NCC to bundle these dynamically loaded modules
 require('shelljs/src/cat')
@@ -53,6 +51,48 @@ const gitStatusToString = (headStatus, stageStatus) => {
             return 'UNKNOWN'
     }
 }
+
+const getWorkspacePackages = (workspaces, rootCwd) => {
+    if (!workspaces) {
+        return []
+    }
+
+    core.info(`found workspaces: ${workspaces}`)
+
+    const ws = fg.sync(workspaces, {
+        onlyDirectories: true,
+        dot: false,
+        rootCwd,
+    })
+
+    return ws.map((w) => {
+        core.startGroup(`workspace: ${w}`)
+        core.info(`workspace: ${w}`)
+        const ws_cwd = path.join(rootCwd, w)
+        core.info(`ws cwd: ${ws_cwd}`)
+
+        const [ws_pkg_path] = fg.sync(['package.json'], {
+            cwd: ws_cwd,
+            onlyFiles: true,
+            absolute: true,
+            dot: false,
+        })
+
+        core.info(`ws pkg path: ${ws_pkg_path}`)
+
+        const ws_pkg = JSON.parse(shell.cat(ws_pkg_path))
+
+        core.info(JSON.stringify(ws_pkg, undefined, 2))
+
+        core.endGroup()
+
+        return {
+            cwd: ws_cwd,
+            pkg: ws_pkg,
+        }
+    })
+}
+
 async function gitListStagedStatuses({ fs, dir, filepath }) {
     const statuses = (
         await git.statusMatrix({
@@ -69,13 +109,92 @@ async function gitListStagedStatuses({ fs, dir, filepath }) {
     core.endGroup()
 }
 
-try {
-    const payload = JSON.stringify(github.context.payload, undefined, 2)
-    core.debug(`The event payload: ${payload}`)
+const defaultDeploy = async (
+    workspacePackages,
+    opts,
+    { rootCwd, rootPkg, rootTargetRepoName }
+) => {
+    if (workspacePackages.length) {
+        await Promise.all(
+            workspacePackages.map(async ({ cwd, pkg }) => {
+                try {
+                    await deployRepo({
+                        ...opts,
+                        repo: cwd,
+                        base: path.basename(cwd),
+                        pkg,
+                        build_repo: null,
+                    })
+                } catch (e) {
+                    core.setFailed(e.message)
+                }
+            })
+        )
+    } else {
+        await deployRepo({
+            ...opts,
+            repo: rootCwd,
+            base: path.basename(rootCwd),
+            pkg: rootPkg,
+            build_repo: rootTargetRepoName,
+        })
+    }
+}
 
-    main()
-} catch (error) {
-    core.setFailed(error.message)
+const customDeploy = async (
+    workspacePackages,
+    opts,
+    { rootCwd, rootPkg, rootTargetRepoName, packages_to_deploy }
+) => {
+    const packages = [
+        ...workspacePackages,
+        {
+            cwd: rootCwd,
+            pkg: rootPkg,
+            rootTargetRepoName,
+        },
+    ]
+
+    const packagesToDeploy = packages_to_deploy
+        .split(' ')
+        .map((entry) =>
+            entry
+                .split(':')
+                .reduce(
+                    (acc, value, index) =>
+                        index === 0
+                            ? { name: value }
+                            : { ...acc, buildDir: value },
+                    {}
+                )
+        )
+
+    core.info(JSON.stringify(packagesToDeploy))
+
+    await Promise.all(
+        packagesToDeploy.reduce((promises, { name, buildDir }) => {
+            const packageInfo = packages.find(({ pkg }) => pkg.name === name)
+
+            if (!packageInfo) {
+                core.warning(`Package ${name} was not found`)
+                return promises
+            }
+
+            core.info(`Deploying package ${name}`)
+
+            return [
+                ...promises,
+                deployRepo({
+                    ...opts,
+                    repo: packageInfo.cwd,
+                    base: path.basename(packageInfo.cwd),
+                    pkg: packageInfo.pkg,
+                    build_dir: buildDir == null ? opts.build_dir : buildDir,
+                    build_repo: rootTargetRepoName,
+                }).catch((e) => core.setFailed(e.message)),
+            ]
+        }, [])
+    )
 }
 
 async function main() {
@@ -90,82 +209,49 @@ async function main() {
     const gh_org = core.getInput('github-org')
     const gh_usr = core.getInput('github-user')
     const build_repo = core.getInput('repo-name')
+    const packages_to_deploy = core.getInput('packages')
 
     const opts = {
         build_dir,
-        cwd,
         gh_token,
         gh_org,
         gh_usr,
-        build_repo,
     }
 
     core.startGroup('Options for run:')
-    core.info(`${JSON.stringify(opts, undefined, 2)}`)
+    core.info(
+        `${JSON.stringify(
+            { ...opts, cwd, build_repo, packages_to_deploy },
+            undefined,
+            2
+        )}`
+    )
     core.endGroup()
 
     const pkg_path = path.join(cwd, 'package.json')
     const pkg = JSON.parse(shell.cat(pkg_path))
 
-    core.startGroup('Loaded package')
+    core.startGroup('Loaded root package')
     core.info(`pkg ls: ${shell.ls(cwd)}`)
     core.info(`pkg path: ${pkg_path}`)
     core.info(JSON.stringify(pkg, undefined, 2))
     core.endGroup()
 
     try {
-        if (pkg.workspaces) {
-            core.info(`found workspaces: ${pkg.workspaces}`)
+        const workspacePackages = getWorkspacePackages(pkg.workspaces, cwd)
 
-            const ws = fg.sync(pkg.workspaces, {
-                onlyDirectories: true,
-                dot: false,
-                cwd,
+        if (!packages_to_deploy) {
+            await defaultDeploy(workspacePackages, opts, {
+                rootCwd: cwd,
+                rootPkg: pkg,
+                rootTargetRepoName: build_repo,
             })
-
-            core.info(`workspaces: ${ws}`)
-
-            Promise.all(
-                ws.map(async w => {
-                    core.info(`workspace: ${w}`)
-                    const ws_cwd = path.join(cwd, w)
-                    core.info(`ws cwd: ${ws_cwd}`)
-
-                    const [ws_pkg_path] = fg.sync(['package.json'], {
-                        cwd: ws_cwd,
-                        onlyFiles: true,
-                        absolute: true,
-                        dot: false,
-                    })
-
-                    core.info(`ws pkg path: ${ws_pkg_path}`)
-
-                    const ws_pkg = JSON.parse(shell.cat(ws_pkg_path))
-
-                    core.startGroup('Loaded WS package')
-                    core.info(`path: ${ws_pkg_path}`)
-                    core.info(JSON.stringify(ws_pkg, undefined, 2))
-                    core.endGroup()
-
-                    try {
-                        await deployRepo({
-                            ...opts,
-                            repo: ws_cwd,
-                            base: path.basename(ws_cwd),
-                            pkg: ws_pkg,
-                            build_repo: null,
-                        })
-                    } catch (e) {
-                        core.setFailed(e.message)
-                    }
-                })
-            )
         } else {
-            await deployRepo({
-                ...opts,
-                repo: cwd,
-                base: path.basename(cwd),
-                pkg,
+            await customDeploy(workspacePackages, opts, {
+                rootCwd: cwd,
+                rootPkg: pkg,
+                rootTargetRepoName: build_repo,
+                packages_to_deploy,
             })
         }
     } catch (error) {
@@ -174,16 +260,12 @@ async function main() {
 }
 
 async function deployRepo(opts) {
-    const {
-        base,
-        repo,
-        gh_org,
-        gh_usr,
-        gh_token,
-        build_dir,
-        pkg,
-        build_repo,
-    } = opts
+    const { base, repo, gh_org, gh_usr, gh_token, build_dir, pkg, build_repo } =
+        opts
+
+    core.info(
+        `base: ${base} repo: ${repo} build_dir: ${build_dir} pkg: ${pkg} build_repo: ${build_repo}`
+    )
 
     const context = github.context
     const octokit = new github.GitHub(gh_token)
@@ -221,7 +303,7 @@ async function deployRepo(opts) {
     const ghRoot = gh_usr ? gh_usr : gh_org
 
     // drop the scope from e.g. @dhis2/foobar to foobar
-    const strip = name => path.basename(name)
+    const strip = (name) => path.basename(name)
 
     const repo_name = strip(build_repo ? build_repo : pkg.name)
 
@@ -229,12 +311,11 @@ async function deployRepo(opts) {
 
     try {
         if (gh_usr) {
-            const create_user_repo = await octokit.repos.createForAuthenticatedUser(
-                {
+            const create_user_repo =
+                await octokit.repos.createForAuthenticatedUser({
                     name: repo_name,
                     auto_init: true,
-                }
-            )
+                })
             core.info(`create user repo: ${create_user_repo}`)
         } else {
             const create_org_repo = await octokit.repos.createInOrg({
@@ -350,14 +431,14 @@ async function deployRepo(opts) {
         const res_find = shell
             .ls(repo)
             .filter(
-                f =>
+                (f) =>
                     !f.match(/.*tmp.*/) &&
                     !f.match(/.*\.git.*/) &&
                     !f.match(/.*node_modules*/)
             )
 
         core.info(`find: ${res_find}`)
-        res_find.map(f =>
+        res_find.map((f) =>
             shell.cp('-r', path.join(repo, f), artifact_repo_path)
         )
     }
@@ -423,8 +504,14 @@ async function format_ref(ref, opts) {
         core.warning('could not expand ref')
     }
 
-    return full_ref
-        .split('/')
-        .slice(2)
-        .join('/')
+    return full_ref.split('/').slice(2).join('/')
+}
+
+try {
+    const payload = JSON.stringify(github.context.payload, undefined, 2)
+    core.debug(`The event payload: ${payload}`)
+
+    main()
+} catch (error) {
+    core.setFailed(error.message)
 }
